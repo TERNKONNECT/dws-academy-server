@@ -6,7 +6,6 @@ on:
     paths:
       - 'dws-academy-server/**'
       - '.github/workflows/deploy-backend.yml' 
-         
 jobs:
   deploy:
     runs-on: ubuntu-latest
