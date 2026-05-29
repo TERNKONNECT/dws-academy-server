@@ -24,7 +24,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-        
+
       - name: Install Serverless Framework
         run: npm install -g serverless
 
@@ -35,6 +35,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+          
       - name: Create .env file
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
