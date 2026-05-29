@@ -1,20 +1,11 @@
 import express from "express";
 import multer from "multer";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
-import cloudinary from "../config/cloudinary.js";
 import User from "../models/User.js";
 import { protect, adminOnly } from "../middleware/auth.js";
+import { uploadFile, deleteFile } from "../config/storage.js";
 
 const router = express.Router();
-
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: "lms/avatars",
-    allowed_formats: ["jpg", "jpeg", "png", "webp"],
-  },
-});
-const upload = multer({ storage });
+const upload = multer({ storage: multer.memoryStorage() });
 
 // GET /api/profile — get logged-in admin's profile
 router.get("/", protect, adminOnly, async (req, res) => {
@@ -73,12 +64,13 @@ router.post(
       if (!user) return res.status(404).json({ error: "User not found" });
 
       if (user.avatarCloudinaryId) {
-        await cloudinary.uploader.destroy(user.avatarCloudinaryId);
+        await deleteFile(user.avatarCloudinaryId, "image");
       }
 
+      const fileData = await uploadFile(req.file);
       await user.update({
-        avatar: req.file.path,
-        avatarCloudinaryId: req.file.filename,
+        avatar: fileData.url,
+        avatarCloudinaryId: fileData.id,
       });
       res.json({ avatar: user.avatar });
     } catch (err) {
