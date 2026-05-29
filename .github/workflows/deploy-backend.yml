@@ -36,7 +36,6 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Create .env file
-        working-directory: ./dws-academy-server
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
           echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
