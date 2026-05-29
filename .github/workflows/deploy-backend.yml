@@ -7,7 +7,6 @@ on:
     paths:
       - 'dws-academy-server/**'
       - '.github/workflows/deploy-backend.yml'
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -35,7 +34,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-          
+
       - name: Create .env file
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
