@@ -24,7 +24,6 @@ functions:
 package:
   # Exclude unnecessary files to keep the Lambda deployment size small
   patterns:
-    - '!node_modules/aws-sdk/**'
     - '!.git/**'
     - '!.github/**'
     - '!.vscode/**'
