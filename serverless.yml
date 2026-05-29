@@ -5,7 +5,6 @@ provider:
   runtime: nodejs20.x
   region: eu-north-1
   stage: ${opt:stage, 'prod'}
-  profile: ternkonnect # Using the same profile configured earlier
   environment:
     # You will need to make sure these variables match what your production requires.
     NODE_ENV: production
