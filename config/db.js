@@ -1,7 +1,7 @@
 import pg from "pg";
 import { Sequelize } from "sequelize";
 
-const isProduction = process.env.DATABASE_URL?.includes("neon.tech");
+const isProduction = process.env.DATABASE_URL?.includes("neon.tech") || process.env.DATABASE_URL?.includes("rds.amazonaws.com");
 
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: "postgres",
