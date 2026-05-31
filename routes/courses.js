@@ -6,7 +6,12 @@ import Lesson from "../models/Lesson.js";
 import Quiz from "../models/Quiz.js";
 import User from "../models/User.js";
 import { protect, adminOnly } from "../middleware/auth.js";
-import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
+import {
+  createUploadUrl,
+  uploadFile,
+  deleteFile,
+  getFileUrl,
+} from "../config/storage.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -137,6 +142,31 @@ router.post("/", protect, adminOnly, async (req, res) => {
 });
 
 // POST upload intro video
+router.post("/:id/intro-video-upload-url", protect, adminOnly, async (req, res) => {
+  try {
+    const course = await Course.findByPk(req.params.id);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+    if (req.user.role === "admin" && course.createdBy !== req.user.id)
+      return res
+        .status(403)
+        .json({ error: "Not authorized to update this course" });
+
+    const { filename, contentType } = req.body;
+    if (!filename)
+      return res.status(400).json({ error: "Filename is required" });
+
+    const upload = await createUploadUrl({
+      filename,
+      contentType,
+      folder: "lms/intro-videos",
+    });
+
+    res.json(upload);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post(
   "/:id/intro-video",
   protect,

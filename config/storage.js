@@ -47,6 +47,32 @@ export const uploadFile = async (file, folder = "uploads") => {
   });
 };
 
+export const createUploadUrl = async ({
+  filename,
+  contentType,
+  folder = "uploads",
+}) => {
+  if (!s3 || !process.env.AWS_S3_BUCKET_NAME) {
+    throw new Error("S3 upload storage is not configured");
+  }
+
+  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key = `${folder}/${Date.now()}-${safeName}`;
+
+  const uploadUrl = await s3.getSignedUrlPromise("putObject", {
+    Bucket: process.env.AWS_S3_BUCKET_NAME,
+    Key: key,
+    ContentType: contentType || "application/octet-stream",
+    Expires: 60 * 60,
+  });
+
+  return {
+    uploadUrl,
+    key,
+    url: `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
+  };
+};
+
 /**
  * Handles file deletion by switching between S3 and Cloudinary
  * @param {string} id - The provider-specific ID (Key for S3, public_id for Cloudinary)

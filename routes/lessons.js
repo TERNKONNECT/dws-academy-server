@@ -3,7 +3,12 @@ import multer from "multer";
 import Lesson from "../models/Lesson.js";
 import Module from "../models/Module.js";
 import { protect, adminOnly } from "../middleware/auth.js";
-import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
+import {
+  createUploadUrl,
+  uploadFile,
+  deleteFile,
+  getFileUrl,
+} from "../config/storage.js";
 
 const router = express.Router({ mergeParams: true });
 const upload = multer({ storage: multer.memoryStorage() });
@@ -68,6 +73,27 @@ router.post("/text", protect, adminOnly, async (req, res) => {
 });
 
 // POST create video lesson
+router.post("/video-upload-url", protect, adminOnly, async (req, res) => {
+  try {
+    const mod = await Module.findByPk(req.params.moduleId);
+    if (!mod) return res.status(404).json({ error: "Module not found" });
+
+    const { filename, contentType } = req.body;
+    if (!filename)
+      return res.status(400).json({ error: "Filename is required" });
+
+    const upload = await createUploadUrl({
+      filename,
+      contentType,
+      folder: "lms/lessons",
+    });
+
+    res.json(upload);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post(
   "/video",
   protect,
