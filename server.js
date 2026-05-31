@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import { pathToFileURL } from "url";
 import { connectDB } from "./config/db.js";
 import User from "./models/User.js";
 import { setupCourseAssociations } from "./models/Course.js";
@@ -14,7 +15,7 @@ import profileRoutes from "./routes/profile.js";
 import reviewRoutes from "./routes/reviews.js";
 
 setupCourseAssociations(User);
-connectDB(); // Connect to DB once at startup
+const dbReady = connectDB(); // Connect and apply additive schema guards once at startup
 
 const app = express();
 
@@ -36,6 +37,15 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+app.use(async (req, res, next) => {
+  try {
+    await dbReady;
+    next();
+  } catch {
+    res.status(503).json({ error: "Database is not ready" });
+  }
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/courses/:courseId/modules", moduleRoutes);
@@ -49,7 +59,11 @@ app.use("/api/reviews", reviewRoutes);
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get("/", (req, res) => res.send("API is running"));
 
-if (process.env.NODE_ENV !== "production") {
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  await dbReady;
   app.listen(process.env.PORT || 9000, () => {
     console.log(
       `Backend running on http://localhost:${process.env.PORT || 9000}`,

@@ -6,10 +6,33 @@ import Lesson from "../models/Lesson.js";
 import Quiz from "../models/Quiz.js";
 import User from "../models/User.js";
 import { protect, adminOnly } from "../middleware/auth.js";
-import { uploadFile, deleteFile } from "../config/storage.js";
+import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+async function serializeCourse(course) {
+  const data = course.toJSON ? course.toJSON() : course;
+  return {
+    ...data,
+    thumbnail: await getFileUrl(data.thumbnailCloudinaryId, data.thumbnail),
+    introVideoUrl: await getFileUrl(
+      data.introVideoCloudinaryId,
+      data.introVideoUrl,
+    ),
+  };
+}
+
+async function serializeLesson(lesson) {
+  const data = lesson.toJSON ? lesson.toJSON() : lesson;
+  return {
+    ...data,
+    videoUrl:
+      data.type === "video"
+        ? await getFileUrl(data.cloudinaryId, data.videoUrl)
+        : data.videoUrl,
+  };
+}
 
 // GET all courses
 router.get("/", async (req, res) => {
@@ -52,7 +75,7 @@ router.get("/", async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    res.json(courses);
+    res.json(await Promise.all(courses.map(serializeCourse)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -78,11 +101,18 @@ router.get("/:id", async (req, res) => {
           }),
           Quiz.findOne({ where: { moduleId: mod.id } }),
         ]);
-        return { ...mod.toJSON(), lessons, quiz };
+        return {
+          ...mod.toJSON(),
+          lessons: await Promise.all(lessons.map(serializeLesson)),
+          quiz,
+        };
       }),
     );
 
-    res.json({ ...course.toJSON(), modules: modulesWithContent });
+    res.json({
+      ...(await serializeCourse(course)),
+      modules: modulesWithContent,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -127,7 +157,7 @@ router.post(
         await deleteFile(course.introVideoCloudinaryId, "video");
       }
 
-      const fileData = await uploadFile(req.file);
+      const fileData = await uploadFile(req.file, "lms/intro-videos");
       await course.update({
         introVideoUrl: fileData.url,
         introVideoCloudinaryId: fileData.id,
@@ -159,7 +189,7 @@ router.post(
         await deleteFile(course.thumbnailCloudinaryId, "image");
       }
 
-      const fileData = await uploadFile(req.file);
+      const fileData = await uploadFile(req.file, "lms/thumbnails");
       await course.update({
         thumbnail: fileData.url,
         thumbnailCloudinaryId: fileData.id,

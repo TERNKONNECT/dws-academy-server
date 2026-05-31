@@ -1,5 +1,5 @@
 import pg from "pg";
-import { Sequelize } from "sequelize";
+import { DataTypes, Sequelize } from "sequelize";
 
 const isProduction = process.env.DATABASE_URL?.includes("neon.tech") || process.env.DATABASE_URL?.includes("rds.amazonaws.com");
 
@@ -17,17 +17,47 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
 });
 
 let isConnected = false;
+let connectionPromise = null;
+
+async function ensureUserInviteColumns() {
+  const queryInterface = sequelize.getQueryInterface();
+  const table = await queryInterface.describeTable("users");
+
+  const columns = [
+    ["adminInviteToken", { type: DataTypes.STRING, allowNull: true }],
+    ["adminInviteExpires", { type: DataTypes.DATE, allowNull: true }],
+    [
+      "passwordSetupRequired",
+      { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    ],
+  ];
+
+  for (const [columnName, definition] of columns) {
+    if (!table[columnName]) {
+      await queryInterface.addColumn("users", columnName, definition);
+      console.log(`Added missing users.${columnName} column`);
+    }
+  }
+}
 
 export async function connectDB() {
   if (isConnected) return;
-  try {
-    await sequelize.authenticate();
-    isConnected = true;
-    console.log("PostgreSQL connected");
-  } catch (err) {
-    console.error("PostgreSQL connection failed:", err.message);
-    throw err;
-  }
+  if (connectionPromise) return connectionPromise;
+
+  connectionPromise = (async () => {
+    try {
+      await sequelize.authenticate();
+      await ensureUserInviteColumns();
+      isConnected = true;
+      console.log("PostgreSQL connected");
+    } catch (err) {
+      connectionPromise = null;
+      console.error("PostgreSQL connection failed:", err.message);
+      throw err;
+    }
+  })();
+
+  return connectionPromise;
 }
 
 export default sequelize;

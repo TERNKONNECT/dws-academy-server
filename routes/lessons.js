@@ -3,10 +3,21 @@ import multer from "multer";
 import Lesson from "../models/Lesson.js";
 import Module from "../models/Module.js";
 import { protect, adminOnly } from "../middleware/auth.js";
-import { uploadFile, deleteFile } from "../config/storage.js";
+import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
 
 const router = express.Router({ mergeParams: true });
 const upload = multer({ storage: multer.memoryStorage() });
+
+async function serializeLesson(lesson) {
+  const data = lesson.toJSON ? lesson.toJSON() : lesson;
+  return {
+    ...data,
+    videoUrl:
+      data.type === "video"
+        ? await getFileUrl(data.cloudinaryId, data.videoUrl)
+        : data.videoUrl,
+  };
+}
 
 // GET all lessons for a module
 router.get("/", async (req, res) => {
@@ -15,7 +26,7 @@ router.get("/", async (req, res) => {
       where: { moduleId: req.params.moduleId },
       order: [["order", "ASC"]],
     });
-    res.json(lessons);
+    res.json(await Promise.all(lessons.map(serializeLesson)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -28,7 +39,7 @@ router.get("/:id", async (req, res) => {
       where: { id: req.params.id, moduleId: req.params.moduleId },
     });
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
-    res.json(lesson);
+    res.json(await serializeLesson(lesson));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -72,7 +83,7 @@ router.post(
       const { title, duration, order } = req.body;
       if (!title) return res.status(400).json({ error: "Title is required" });
 
-      const fileData = await uploadFile(req.file);
+      const fileData = await uploadFile(req.file, "lms/lessons");
       const lesson = await Lesson.create({
         moduleId: req.params.moduleId,
         title,
@@ -82,7 +93,7 @@ router.post(
         duration,
         order,
       });
-      res.status(201).json(lesson);
+      res.status(201).json(await serializeLesson(lesson));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -97,7 +108,7 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
     });
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
     await lesson.update(req.body);
-    res.json(lesson);
+    res.json(await serializeLesson(lesson));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -142,7 +153,7 @@ router.post("/video-url", protect, adminOnly, async (req, res) => {
       duration,
       order,
     });
-    res.status(201).json(lesson);
+    res.status(201).json(await serializeLesson(lesson));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

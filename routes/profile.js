@@ -2,10 +2,24 @@ import express from "express";
 import multer from "multer";
 import User from "../models/User.js";
 import { protect, adminOnly } from "../middleware/auth.js";
-import { uploadFile, deleteFile } from "../config/storage.js";
+import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+async function serializeProfile(user) {
+  const data = user.toJSON ? user.toJSON() : user;
+  return {
+    id: data.id,
+    name: data.name,
+    email: data.email,
+    title: data.title,
+    bio: data.bio,
+    avatar: await getFileUrl(data.avatarCloudinaryId, data.avatar),
+    role: data.role,
+    createdAt: data.createdAt,
+  };
+}
 
 // GET /api/profile — get logged-in admin's profile
 router.get("/", protect, adminOnly, async (req, res) => {
@@ -18,12 +32,13 @@ router.get("/", protect, adminOnly, async (req, res) => {
         "title",
         "bio",
         "avatar",
+        "avatarCloudinaryId",
         "role",
         "createdAt",
       ],
     });
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json(user);
+    res.json(await serializeProfile(user));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -36,15 +51,7 @@ router.put("/", protect, adminOnly, async (req, res) => {
     const user = await User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ error: "User not found" });
     await user.update({ name, title, bio });
-    res.json({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      title: user.title,
-      bio: user.bio,
-      avatar: user.avatar,
-      role: user.role,
-    });
+    res.json(await serializeProfile(user));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -67,12 +74,12 @@ router.post(
         await deleteFile(user.avatarCloudinaryId, "image");
       }
 
-      const fileData = await uploadFile(req.file);
+      const fileData = await uploadFile(req.file, "lms/avatars");
       await user.update({
         avatar: fileData.url,
         avatarCloudinaryId: fileData.id,
       });
-      res.json({ avatar: user.avatar });
+      res.json(await serializeProfile(user));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -84,10 +91,21 @@ router.get("/:adminId", async (req, res) => {
   try {
     const user = await User.findOne({
       where: { id: req.params.adminId, role: "admin" },
-      attributes: ["id", "name", "title", "bio", "avatar", "createdAt"],
+      attributes: [
+        "id",
+        "name",
+        "title",
+        "bio",
+        "avatar",
+        "avatarCloudinaryId",
+        "createdAt",
+      ],
     });
     if (!user) return res.status(404).json({ error: "Instructor not found" });
-    res.json(user);
+    const profile = await serializeProfile(user);
+    delete profile.email;
+    delete profile.role;
+    res.json(profile);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -102,7 +120,7 @@ router.post("/avatar-url", protect, adminOnly, async (req, res) => {
     const user = await User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ error: "User not found" });
     await user.update({ avatar, avatarCloudinaryId });
-    res.json({ avatar: user.avatar });
+    res.json(await serializeProfile(user));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
