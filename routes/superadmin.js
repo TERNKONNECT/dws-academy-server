@@ -12,7 +12,7 @@ import {
   appUrl,
   sendEmail,
 } from "../config/email.js";
-import { protect, superAdminOnly } from "../middleware/auth.js";
+import { protect, superAdminOnly, adminOnly } from "../middleware/auth.js";
 import { Op } from "sequelize";
 
 const router = express.Router();
@@ -41,13 +41,16 @@ function monthKey(date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
 }
 
-async function getGrowthData(Model) {
+async function getGrowthData(Model, extraWhere = {}) {
   const months = getLastSixMonths();
   const countsByMonth = Object.fromEntries(months.map((month) => [month.key, 0]));
 
   const records = await Model.findAll({
     attributes: ["createdAt"],
-    where: { createdAt: { [Op.gte]: months[0].start } },
+    where: {
+      ...extraWhere,
+      createdAt: { [Op.gte]: months[0].start }
+    },
   });
 
   records.forEach((record) => {
@@ -283,26 +286,153 @@ router.get("/instructors/:id", protect, superAdminOnly, async (req, res) => {
   }
 });
 
-// GET /api/superadmin/stats — platform-wide stats for super admin dashboard
-router.get("/stats", protect, superAdminOnly, async (req, res) => {
+// GET /api/superadmin/stats — platform-wide or instructor-specific stats
+router.get("/stats", protect, adminOnly, async (req, res) => {
   try {
-    const [
-      totalUsers,
-      totalAdmins,
-      totalCourses,
-      totalEnrollments,
-      totalCompleted,
-      totalLessons,
-      totalQuizzes,
-    ] = await Promise.all([
-      User.count({ where: { role: "user" } }),
-      User.count({ where: { role: "admin" } }),
-      Course.count(),
-      Enrollment.count(),
-      Enrollment.count({ where: { isCompleted: true } }),
-      Lesson.count(),
-      Quiz.count(),
-    ]);
+    let totalUsers, totalAdmins, totalCourses, totalEnrollments, totalCompleted, totalLessons, totalQuizzes, activeUsers;
+    let recentActivity = [];
+
+    if (req.user.role === "super-admin") {
+      [
+        totalUsers,
+        totalAdmins,
+        totalCourses,
+        totalEnrollments,
+        totalCompleted,
+        totalLessons,
+        totalQuizzes,
+      ] = await Promise.all([
+        User.count({ where: { role: "user" } }),
+        User.count({ where: { role: "admin" } }),
+        Course.count(),
+        Enrollment.count(),
+        Enrollment.count({ where: { isCompleted: true } }),
+        Lesson.count(),
+        Quiz.count(),
+      ]);
+      activeUsers = totalUsers;
+
+      // Fetch platform-wide recent activity: recent enrollments
+      const recentEnrollments = await Enrollment.findAll({
+        limit: 5,
+        order: [["createdAt", "DESC"]],
+        include: [
+          { model: User, attributes: ["name"] },
+          { model: Course, attributes: ["title"] }
+        ]
+      });
+
+      recentEnrollments.forEach((e) => {
+        recentActivity.push({
+          activity: e.isCompleted ? `Completed course: ${e.Course?.title}` : `Enrolled in ${e.Course?.title}`,
+          user: e.User?.name || "Unknown Student",
+          date: e.updatedAt || e.createdAt,
+        });
+      });
+
+      // Fetch recent course publications
+      const recentCourses = await Course.findAll({
+        limit: 5,
+        order: [["createdAt", "DESC"]],
+        include: [
+          { model: User, as: "instructor", attributes: ["name"] }
+        ]
+      });
+
+      recentCourses.forEach((c) => {
+        recentActivity.push({
+          activity: c.status === "published" ? `New course published: ${c.title}` : `New course drafted: ${c.title}`,
+          user: c.instructor?.name || "Admin",
+          date: c.createdAt,
+        });
+      });
+
+    } else {
+      // Regular admin (instructor)
+      const instructorId = req.user.id;
+      const courses = await Course.findAll({
+        where: { createdBy: instructorId },
+        attributes: ["id", "title", "createdAt", "updatedAt"]
+      });
+      const courseIds = courses.map((c) => c.id);
+
+      totalAdmins = 0;
+      if (courseIds.length > 0) {
+        [
+          totalCourses,
+          totalEnrollments,
+          totalCompleted,
+          totalLessons,
+          totalQuizzes,
+          totalUsers,
+        ] = await Promise.all([
+          Promise.resolve(courseIds.length),
+          Enrollment.count({ where: { courseId: courseIds } }),
+          Enrollment.count({ where: { courseId: courseIds, isCompleted: true } }),
+          Lesson.count({
+            include: [{
+              model: Module,
+              where: { courseId: courseIds },
+              required: true
+            }]
+          }),
+          Quiz.count({
+            include: [{
+              model: Module,
+              where: { courseId: courseIds },
+              required: true
+            }]
+          }),
+          Enrollment.count({
+            distinct: true,
+            col: "userId",
+            where: { courseId: courseIds }
+          }),
+        ]);
+        activeUsers = totalUsers;
+
+        // Fetch instructor-specific recent activity: enrollments in their courses
+        const recentEnrollments = await Enrollment.findAll({
+          where: { courseId: courseIds },
+          limit: 5,
+          order: [["createdAt", "DESC"]],
+          include: [
+            { model: User, attributes: ["name"] },
+            { model: Course, attributes: ["title"] }
+          ]
+        });
+
+        recentEnrollments.forEach((e) => {
+          recentActivity.push({
+            activity: e.isCompleted ? `Completed course: ${e.Course?.title}` : `Enrolled in ${e.Course?.title}`,
+            user: e.User?.name || "Unknown Student",
+            date: e.updatedAt || e.createdAt,
+          });
+        });
+
+        // Fetch instructor's course activities
+        courses.forEach((c) => {
+          recentActivity.push({
+            activity: c.createdAt.getTime() === c.updatedAt.getTime() ? `New course drafted: ${c.title}` : `Updated course: ${c.title}`,
+            user: "You",
+            date: c.updatedAt || c.createdAt,
+          });
+        });
+
+      } else {
+        totalCourses = 0;
+        totalEnrollments = 0;
+        totalCompleted = 0;
+        totalLessons = 0;
+        totalQuizzes = 0;
+        totalUsers = 0;
+        activeUsers = 0;
+      }
+    }
+
+    // Sort recent activity by date descending, limit to 5
+    recentActivity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    recentActivity = recentActivity.slice(0, 5);
 
     res.json({
       totalUsers,
@@ -311,12 +441,13 @@ router.get("/stats", protect, superAdminOnly, async (req, res) => {
       totalEnrollments,
       totalLessons,
       totalQuizzes,
-      activeUsers: totalUsers,
+      activeUsers,
       totalCompleted,
       completionRate:
         totalEnrollments > 0
           ? Math.round((totalCompleted / totalEnrollments) * 100)
           : 0,
+      recentActivity,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -324,18 +455,171 @@ router.get("/stats", protect, superAdminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/user-growth — user signups for the last six months
-router.get("/user-growth", protect, superAdminOnly, async (req, res) => {
+router.get("/user-growth", protect, adminOnly, async (req, res) => {
   try {
-    res.json(await getGrowthData(User));
+    if (req.user.role === "super-admin") {
+      res.json(await getGrowthData(User));
+    } else {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      const courseIds = courses.map((c) => c.id);
+      
+      const enrollments = await Enrollment.findAll({
+        where: { courseId: courseIds },
+        attributes: ["userId"],
+        group: ["userId"]
+      });
+      const userIds = enrollments.map((e) => e.userId);
+      res.json(await getGrowthData(User, { id: userIds }));
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // GET /api/superadmin/enrollment-growth — enrollments for the last six months
-router.get("/enrollment-growth", protect, superAdminOnly, async (req, res) => {
+router.get("/enrollment-growth", protect, adminOnly, async (req, res) => {
   try {
-    res.json(await getGrowthData(Enrollment));
+    if (req.user.role === "super-admin") {
+      res.json(await getGrowthData(Enrollment));
+    } else {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      const courseIds = courses.map((c) => c.id);
+      res.json(await getGrowthData(Enrollment, { courseId: courseIds }));
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/superadmin/course-completion — course completion statistics
+router.get("/course-completion", protect, adminOnly, async (req, res) => {
+  try {
+    let whereClause = {};
+    if (req.user.role !== "super-admin") {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      const courseIds = courses.map((c) => c.id);
+      whereClause = { courseId: courseIds };
+    }
+
+    const enrollments = await Enrollment.findAll({
+      where: whereClause,
+      attributes: ["id", "isCompleted"],
+    });
+
+    if (enrollments.length === 0) {
+      return res.json({ completed: 0, inProgress: 0, notStarted: 0 });
+    }
+
+    const enrollmentIds = enrollments.map((e) => e.id);
+    const progressRecords = await LessonProgress.findAll({
+      where: { enrollmentId: enrollmentIds },
+      attributes: ["enrollmentId"],
+    });
+
+    const progressCounts = {};
+    progressRecords.forEach((pr) => {
+      progressCounts[pr.enrollmentId] = (progressCounts[pr.enrollmentId] || 0) + 1;
+    });
+
+    let completed = 0;
+    let inProgress = 0;
+    let notStarted = 0;
+
+    enrollments.forEach((e) => {
+      if (e.isCompleted) {
+        completed++;
+      } else if (progressCounts[e.id] > 0) {
+        inProgress++;
+      } else {
+        notStarted++;
+      }
+    });
+
+    res.json({ completed, inProgress, notStarted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/superadmin/quiz-success — quiz success rates
+router.get("/quiz-success", protect, adminOnly, async (req, res) => {
+  try {
+    let courseIds = null;
+    if (req.user.role !== "super-admin") {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      courseIds = courses.map((c) => c.id);
+    }
+
+    const quizInclude = {
+      model: Module,
+      required: true,
+      include: [{
+        model: Course,
+        required: true,
+        attributes: ["id", "title"]
+      }]
+    };
+    if (courseIds) {
+      quizInclude.where = { courseId: courseIds };
+    }
+
+    const quizzes = await Quiz.findAll({
+      include: [quizInclude]
+    });
+
+    const labels = [];
+    const passed = [];
+    const failed = [];
+
+    for (const quiz of quizzes) {
+      labels.push(quiz.title);
+      const courseId = quiz.Module.Course.id;
+      const enrollmentsCount = await Enrollment.count({ where: { courseId } });
+      const completedCount = await Enrollment.count({ where: { courseId, isCompleted: true } });
+      
+      passed.push(completedCount);
+      failed.push(Math.max(0, enrollmentsCount - completedCount));
+    }
+
+    res.json({ labels, passed, failed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/superadmin/popular-courses — top courses by enrollment
+router.get("/popular-courses", protect, adminOnly, async (req, res) => {
+  try {
+    let courseWhere = {};
+    if (req.user.role !== "super-admin") {
+      courseWhere = { createdBy: req.user.id };
+    }
+
+    const courses = await Course.findAll({
+      where: courseWhere,
+      attributes: ["id", "title"]
+    });
+
+    const popular = [];
+    for (const course of courses) {
+      const count = await Enrollment.count({ where: { courseId: course.id } });
+      popular.push({ title: course.title, enrollments: count });
+    }
+
+    popular.sort((a, b) => b.enrollments - a.enrollments);
+    res.json(popular.slice(0, 5));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
