@@ -20,7 +20,7 @@ provider:
             - s3:GetObject
             - s3:DeleteObject
           Resource:
-            - arn:aws:s3:::${env:AWS_S3_BUCKET_NAME}/*
+            - arn:aws:s3:::${env:AWS_S3_BUCKET_NAME, 'dws-academy-s3-bucket'}/*
 
 functions:
   api:
