@@ -1,0 +1,43 @@
+service: dws-academy-backend
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-north-1
+  stage: ${opt:stage, 'prod'}
+  environment:
+    # You will need to make sure these variables match what your production requires.
+    NODE_ENV: production
+    # DO NOT hardcode secrets in this file. It is better to use AWS Systems Manager Parameter Store
+    # or map them from an external .env file if running via CI/CD.
+    # For now, we leave them blank, but you can set them securely in AWS or CI/CD.
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+          Resource:
+            - arn:aws:s3:::${env:AWS_S3_BUCKET_NAME}/*
+
+functions:
+  api:
+    handler: lambda.handler
+    events:
+      # This catches all HTTP requests and forwards them to your Express app
+      - httpApi:
+          path: '*'
+          method: '*'
+
+package:
+  # Exclude unnecessary files to keep the Lambda deployment size small
+  patterns:
+    - '!.git/**'
+    - '!.github/**'
+    - '!.vscode/**'
+    - '!*.md'
+
+plugins:
+  - serverless-dotenv-plugin
