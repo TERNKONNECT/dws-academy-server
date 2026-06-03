@@ -47,3 +47,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
         run: serverless deploy --stage prod
+        
