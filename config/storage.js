@@ -66,10 +66,11 @@ export const createUploadUrl = async ({
     Expires: 60 * 60,
   });
 
+  const region = process.env.AWS_S3_REGION || process.env.AWS_REGION || "eu-north-1";
   return {
     uploadUrl,
     key,
-    url: `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
+    url: `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${region}.amazonaws.com/${key}`,
   };
 };
 
