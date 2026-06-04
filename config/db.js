@@ -33,8 +33,8 @@ async function ensureUserInviteColumns() {
     ["isBlocked", { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }],
   ];
 
-  for (const [columnName, definition] of userColumns) {
-    if (!userTable[columnName]) {
+  for (const [columnName, definition] of columns) {
+    if (!table[columnName]) {
       await queryInterface.addColumn("users", columnName, definition);
       console.log(`Added missing users.${columnName} column`);
     }
