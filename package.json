@@ -8,6 +8,9 @@
   "scripts": {
     "dev": "nodemon --require dotenv/config server.js",
     "start": "node server.js",
+    "db:sync": "node --require dotenv/config scripts/sync-db.js",
+    "create-admin": "node --require dotenv/config scripts/create-admin.js",
+    "create-super-admin": "node --require dotenv/config scripts/create-super-admin.js",
     "build": "echo 'No build step needed'"
   },
   "dependencies": {

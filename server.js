@@ -13,6 +13,8 @@ import enrollmentRoutes from "./routes/enrollment.js";
 import superAdminRoutes from "./routes/superadmin.js";
 import profileRoutes from "./routes/profile.js";
 import reviewRoutes from "./routes/reviews.js";
+import paymentRoutes from "./routes/payments.js";
+import "./models/Payment.js";
 
 setupCourseAssociations(User);
 const dbReady = connectDB(); // Connect and apply additive schema guards once at startup
@@ -28,14 +30,20 @@ app.use((req, res, next) => {
   );
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With",
+    "Content-Type, Authorization, X-Requested-With, X-Paystack-Signature",
   );
   res.setHeader("Access-Control-Max-Age", "86400");
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
 
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 
 app.use(async (req, res, next) => {
   try {
@@ -55,6 +63,7 @@ app.use("/api/enrollments", enrollmentRoutes);
 app.use("/api/superadmin", superAdminRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/payments", paymentRoutes);
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get("/", (req, res) => res.send("API is running"));
