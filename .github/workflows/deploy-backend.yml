@@ -50,4 +50,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          NODE_ENV: ${{ secrets.NODE_ENV }}
         run: serverless deploy --stage prod
