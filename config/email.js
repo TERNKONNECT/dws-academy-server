@@ -236,3 +236,62 @@ export function adminInviteEmailTemplate({ name, inviterName, link }) {
       "If you were not expecting this invitation, you can safely ignore this email.",
   });
 }
+
+export function paymentInvoiceEmailTemplate({
+  name,
+  courseTitle,
+  amount,
+  currency = "NGN",
+  reference,
+  paidAt,
+  courseLink,
+}) {
+  const safeName = escapeHtml(name);
+  const safeCourseTitle = escapeHtml(courseTitle);
+  const safeReference = escapeHtml(reference);
+  const safeCourseLink = escapeHtml(courseLink);
+  const formattedAmount = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+  }).format(amount);
+  const formattedDate = new Intl.DateTimeFormat("en-NG", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(paidAt ? new Date(paidAt) : new Date());
+
+  return emailLayout({
+    preview: `Payment confirmed for ${courseTitle}.`,
+    eyebrow: "Payment receipt",
+    title: "Your course payment is confirmed",
+    body: `
+      <p style="margin:0 0 16px;">Hello ${safeName},</p>
+      <p style="margin:0 0 16px;">Thank you for your payment. Your lifetime access to <strong>${safeCourseTitle}</strong> is now active.</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0;border-collapse:collapse;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;">
+        <tr>
+          <td style="padding:14px 16px;background:#fafafa;color:#71717a;font-size:13px;">Course</td>
+          <td align="right" style="padding:14px 16px;font-weight:700;color:#111111;">${safeCourseTitle}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;background:#fafafa;color:#71717a;font-size:13px;border-top:1px solid #e4e4e7;">Amount paid</td>
+          <td align="right" style="padding:14px 16px;font-weight:800;color:#111111;border-top:1px solid #e4e4e7;">${escapeHtml(formattedAmount)}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;background:#fafafa;color:#71717a;font-size:13px;border-top:1px solid #e4e4e7;">Reference</td>
+          <td align="right" style="padding:14px 16px;color:#3f3f46;border-top:1px solid #e4e4e7;">${safeReference}</td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;background:#fafafa;color:#71717a;font-size:13px;border-top:1px solid #e4e4e7;">Date</td>
+          <td align="right" style="padding:14px 16px;color:#3f3f46;border-top:1px solid #e4e4e7;">${escapeHtml(formattedDate)}</td>
+        </tr>
+      </table>
+      <p style="margin:0;">You can start learning right away from your dashboard.</p>
+    `,
+    action: {
+      href: safeCourseLink,
+      label: "Start Learning",
+    },
+    footerNote:
+      "This receipt confirms successful payment and lifetime access to the course.",
+  });
+}
