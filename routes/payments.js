@@ -191,11 +191,23 @@ router.post("/webhook", async (req, res) => {
       const payment = await Payment.findOne({
         where: { reference: data.reference },
       });
-      if (payment) await grantCourseAccess(payment, data);
+      if (payment) {
+        const verifiedData = await verifyPaystackTransaction(data.reference);
+        if (verifiedData && verifiedData.status === "success") {
+          await grantCourseAccess(payment, verifiedData);
+        } else {
+          await payment.update({
+            status: verifiedData?.status === "abandoned" ? "abandoned" : "failed",
+            gatewayResponse: verifiedData?.gateway_response || "Verification failed",
+            metadata: verifiedData || {},
+          });
+        }
+      }
     }
 
     res.sendStatus(200);
   } catch (err) {
+    console.error("Paystack webhook error:", err);
     res.status(500).json({ error: err.message });
   }
 });
