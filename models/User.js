@@ -14,7 +14,7 @@ const User = sequelize.define(
     email: { type: DataTypes.STRING, allowNull: false, unique: true },
     password: { type: DataTypes.STRING, allowNull: false },
     role: {
-      type: DataTypes.ENUM("user", "admin", "super-admin"),
+      type: DataTypes.ENUM("user", "admin", "super-admin", "operator"),
       defaultValue: "user",
     },
     emailVerified: { type: DataTypes.BOOLEAN, defaultValue: false },

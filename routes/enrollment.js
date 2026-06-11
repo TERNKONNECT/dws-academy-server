@@ -18,6 +18,14 @@ router.post("/:courseId", protect, async (req, res) => {
   try {
     const course = await Course.findByPk(req.params.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
+    if (course.status !== "published") {
+      return res.status(400).json({ error: "Course is not available" });
+    }
+    if (course.pricingType === "paid" && Number(course.price) > 0) {
+      return res.status(402).json({
+        error: "Payment is required before enrolling in this course",
+      });
+    }
 
     const [enrollment, created] = await Enrollment.findOrCreate({
       where: { userId: req.user.id, courseId: req.params.courseId },

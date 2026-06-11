@@ -12,7 +12,7 @@ import {
   appUrl,
   sendEmail,
 } from "../config/email.js";
-import { protect, superAdminOnly, adminOnly } from "../middleware/auth.js";
+import { protect, superAdminOnly, adminOnly, strictAdminOnly } from "../middleware/auth.js";
 import { Op } from "sequelize";
 
 const router = express.Router();
@@ -65,7 +65,7 @@ async function getGrowthData(Model, extraWhere = {}) {
 }
 
 // GET /api/superadmin/instructors — all admins with their course counts
-router.get("/instructors", protect, superAdminOnly, async (req, res) => {
+router.get("/instructors", protect, strictAdminOnly, async (req, res) => {
   try {
     const instructors = await User.findAll({
       where: { role: "admin" },
@@ -127,9 +127,9 @@ router.get("/instructors", protect, superAdminOnly, async (req, res) => {
 
 // GET /api/superadmin/instructors/:id — one instructor's full details + courses
 // POST /api/superadmin/instructors/invite - invite a new admin by email
-router.post("/instructors/invite", protect, superAdminOnly, async (req, res) => {
+router.post("/instructors/invite", protect, strictAdminOnly, async (req, res) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, role } = req.body;
     if (!name || !email)
       return res.status(400).json({ error: "Name and email are required" });
 
@@ -157,7 +157,7 @@ router.post("/instructors/invite", protect, superAdminOnly, async (req, res) => 
         name: String(name).trim(),
         email: normalizedEmail,
         password: temporaryPassword,
-        role: "admin",
+        role: role === "operator" ? "operator" : "admin",
         emailVerified: true,
         passwordSetupRequired: true,
       }));
@@ -205,7 +205,7 @@ router.post("/instructors/invite", protect, superAdminOnly, async (req, res) => 
   }
 });
 
-router.get("/instructors/:id", protect, superAdminOnly, async (req, res) => {
+router.get("/instructors/:id", protect, strictAdminOnly, async (req, res) => {
   try {
     const instructor = await User.findOne({
       where: { id: req.params.id, role: "admin" },
@@ -287,7 +287,7 @@ router.get("/instructors/:id", protect, superAdminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/stats — platform-wide or instructor-specific stats
-router.get("/stats", protect, adminOnly, async (req, res) => {
+router.get("/stats", protect, strictAdminOnly, async (req, res) => {
   try {
     let totalUsers, totalAdmins, totalCourses, totalEnrollments, totalCompleted, totalLessons, totalQuizzes, activeUsers;
     let recentActivity = [];
@@ -455,7 +455,7 @@ router.get("/stats", protect, adminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/user-growth — user signups for the last six months
-router.get("/user-growth", protect, adminOnly, async (req, res) => {
+router.get("/user-growth", protect, strictAdminOnly, async (req, res) => {
   try {
     if (req.user.role === "super-admin") {
       res.json(await getGrowthData(User));
@@ -480,7 +480,7 @@ router.get("/user-growth", protect, adminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/enrollment-growth — enrollments for the last six months
-router.get("/enrollment-growth", protect, adminOnly, async (req, res) => {
+router.get("/enrollment-growth", protect, strictAdminOnly, async (req, res) => {
   try {
     if (req.user.role === "super-admin") {
       res.json(await getGrowthData(Enrollment));
@@ -498,7 +498,7 @@ router.get("/enrollment-growth", protect, adminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/course-completion — course completion statistics
-router.get("/course-completion", protect, adminOnly, async (req, res) => {
+router.get("/course-completion", protect, strictAdminOnly, async (req, res) => {
   try {
     let whereClause = {};
     if (req.user.role !== "super-admin") {
@@ -551,7 +551,7 @@ router.get("/course-completion", protect, adminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/quiz-success — quiz success rates
-router.get("/quiz-success", protect, adminOnly, async (req, res) => {
+router.get("/quiz-success", protect, strictAdminOnly, async (req, res) => {
   try {
     let courseIds = null;
     if (req.user.role !== "super-admin") {
@@ -600,7 +600,7 @@ router.get("/quiz-success", protect, adminOnly, async (req, res) => {
 });
 
 // GET /api/superadmin/popular-courses — top courses by enrollment
-router.get("/popular-courses", protect, adminOnly, async (req, res) => {
+router.get("/popular-courses", protect, strictAdminOnly, async (req, res) => {
   try {
     let courseWhere = {};
     if (req.user.role !== "super-admin") {
