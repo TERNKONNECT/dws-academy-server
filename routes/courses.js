@@ -1,10 +1,12 @@
 import express from "express";
 import multer from "multer";
 import Course from "../models/Course.js";
+import Enrollment from "../models/Enrollment.js";
 import Module from "../models/Module.js";
 import Lesson from "../models/Lesson.js";
 import Quiz from "../models/Quiz.js";
 import User from "../models/User.js";
+import jwt from "jsonwebtoken";
 import { protect, adminOnly } from "../middleware/auth.js";
 import {
   createUploadUrl,
@@ -39,6 +41,43 @@ async function serializeLesson(lesson) {
   };
 }
 
+function publicLessonOutline(lesson) {
+  const data = lesson.toJSON ? lesson.toJSON() : lesson;
+  return {
+    id: data.id,
+    moduleId: data.moduleId,
+    title: data.title,
+    type: data.type,
+    duration: data.duration,
+    order: data.order,
+    locked: true,
+    content: "",
+    videoUrl: "",
+  };
+}
+
+function getAuthUser(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  try {
+    return jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
+async function hasCourseAccess(req, course) {
+  const authUser = getAuthUser(req);
+  if (!authUser) return false;
+  if (authUser.role === "super-admin") return true;
+  if (authUser.role === "admin" && course.createdBy === authUser.id) return true;
+
+  const enrollment = await Enrollment.findOne({
+    where: { userId: authUser.id, courseId: course.id },
+  });
+  return Boolean(enrollment);
+}
+
 // GET all courses
 router.get("/", async (req, res) => {
   try {
@@ -48,8 +87,7 @@ router.get("/", async (req, res) => {
 
     if (authHeader) {
       try {
-        const jwt = await import("jsonwebtoken");
-        const decoded = jwt.default.verify(
+        const decoded = jwt.verify(
           authHeader.split(" ")[1],
           process.env.JWT_SECRET,
         );
@@ -91,6 +129,8 @@ router.get("/:id", async (req, res) => {
   try {
     const course = await Course.findByPk(req.params.id);
     if (!course) return res.status(404).json({ error: "Course not found" });
+    const isPaid = course.pricingType === "paid" && Number(course.price) > 0;
+    const canAccessContent = !isPaid || (await hasCourseAccess(req, course));
 
     const modules = await Module.findAll({
       where: { courseId: req.params.id },
@@ -108,14 +148,17 @@ router.get("/:id", async (req, res) => {
         ]);
         return {
           ...mod.toJSON(),
-          lessons: await Promise.all(lessons.map(serializeLesson)),
-          quiz,
+          lessons: canAccessContent
+            ? await Promise.all(lessons.map(serializeLesson))
+            : lessons.map(publicLessonOutline),
+          quiz: canAccessContent ? quiz : quiz ? { id: quiz.id, moduleId: quiz.moduleId, title: quiz.title } : null,
         };
       }),
     );
 
     res.json({
       ...(await serializeCourse(course)),
+      hasAccess: canAccessContent,
       modules: modulesWithContent,
     });
   } catch (err) {
