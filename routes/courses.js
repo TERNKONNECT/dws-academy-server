@@ -127,12 +127,22 @@ router.get("/:id", async (req, res) => {
 router.post("/", protect, adminOnly, async (req, res) => {
   try {
     const { title, description, difficulty, status } = req.body;
+    const pricingType = req.body.pricingType === "paid" ? "paid" : "free";
+    const price = pricingType === "paid" ? Number(req.body.price || 0) : 0;
+
     if (!title) return res.status(400).json({ error: "Title is required" });
+    if (pricingType === "paid" && price <= 0) {
+      return res.status(400).json({ error: "Paid courses need a price" });
+    }
+
     const course = await Course.create({
       title,
       description,
       difficulty,
       status,
+      pricingType,
+      price,
+      currency: req.body.currency || "NGN",
       createdBy: req.user.id,
     });
     res.status(201).json(course);
@@ -240,7 +250,28 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
       return res
         .status(403)
         .json({ error: "Not authorized to update this course" });
-    await course.update(req.body);
+
+    const nextPricingType =
+      req.body.pricingType === undefined
+        ? course.pricingType
+        : req.body.pricingType === "paid"
+          ? "paid"
+          : "free";
+    const nextPrice =
+      nextPricingType === "paid"
+        ? Number(req.body.price ?? course.price ?? 0)
+        : 0;
+
+    if (nextPricingType === "paid" && nextPrice <= 0) {
+      return res.status(400).json({ error: "Paid courses need a price" });
+    }
+
+    await course.update({
+      ...req.body,
+      pricingType: nextPricingType,
+      price: nextPrice,
+      currency: req.body.currency || course.currency || "NGN",
+    });
     res.json(course);
   } catch (err) {
     res.status(500).json({ error: err.message });
