@@ -205,6 +205,12 @@ async function confirmAndGrantCourseAccess(payment, paystackData = {}) {
   }
 }
 
+router.get("/config", (req, res) => {
+  res.json({
+    serviceFeePercentage: Number(process.env.SERVICE_FEE_PERCENTAGE || 0)
+  });
+});
+
 router.post("/initialize", protect, async (req, res) => {
   try {
     const { courseId } = req.body;
@@ -285,13 +291,23 @@ router.post("/initialize", protect, async (req, res) => {
     const reference = makeReference(course.id, user.id);
     const callbackUrl = frontendUrl(`/payment/success?reference=${reference}`);
     const failedUrl = frontendUrl(`/payment/failed?reference=${reference}&courseId=${course.id}`);
-    const amountKobo = toKobo(course.price);
+    
+    const serviceFeePercentage = Number(process.env.SERVICE_FEE_PERCENTAGE || 0);
+    const courseFee = Number(course.price);
+    const expectedServiceFee = courseFee * (serviceFeePercentage / 100);
+    const expectedTotalAmount = courseFee + expectedServiceFee;
+    
+    const finalTotalAmount = expectedTotalAmount;
+    
+    const amountKobo = toKobo(finalTotalAmount);
 
     paymentLog("info", "paystack_initialize_requested", {
       userId: user.id,
       courseId: course.id,
       reference,
-      amount: Number(course.price),
+      amount: finalTotalAmount,
+      courseFee: courseFee,
+      serviceFee: expectedServiceFee,
       amountKobo,
       currency: course.currency || "NGN",
     });
@@ -308,6 +324,7 @@ router.post("/initialize", protect, async (req, res) => {
         courseTitle: course.title,
         failedUrl,
       },
+      ...(process.env.PAYSTACK_SUBACCOUNT ? { subaccount: process.env.PAYSTACK_SUBACCOUNT } : {})
     });
 
     paymentLog("info", "paystack_initialize_succeeded", {
@@ -324,7 +341,7 @@ router.post("/initialize", protect, async (req, res) => {
       reference,
       accessCode: initialized.access_code || "",
       authorizationUrl: initialized.authorization_url || "",
-      amount: Number(course.price),
+      amount: finalTotalAmount,
       currency: course.currency || "NGN",
       status: "pending",
       metadata: initialized,
