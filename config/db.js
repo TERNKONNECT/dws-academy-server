@@ -102,6 +102,39 @@ async function ensurePaymentTable() {
   console.log("Created missing payments table");
 }
 
+async function ensureEventTables() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+  if (!tables.includes("events")) {
+    await queryInterface.createTable("events", {
+      id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+      name: { type: DataTypes.STRING, allowNull: false },
+      description: { type: DataTypes.TEXT, defaultValue: "" },
+      date: { type: DataTypes.DATE, allowNull: true },
+      createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+      updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    });
+    console.log("Created events table");
+  }
+
+  if (!tables.includes("event_images")) {
+    await queryInterface.createTable("event_images", {
+      id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+      eventId: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: { model: "events", key: "id" },
+        onDelete: "CASCADE",
+      },
+      url: { type: DataTypes.STRING, allowNull: false },
+      key: { type: DataTypes.STRING, allowNull: false },
+      createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+      updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    });
+    console.log("Created event_images table");
+  }
+}
+
 export async function connectDB() {
   if (isConnected) return;
   if (connectionPromise) return connectionPromise;
@@ -111,6 +144,7 @@ export async function connectDB() {
       await sequelize.authenticate();
       await ensureUserInviteColumns();
       await ensurePaymentTable();
+      await ensureEventTables();
       isConnected = true;
       console.log("PostgreSQL connected");
     } catch (err) {
