@@ -14,6 +14,7 @@ import superAdminRoutes from "./routes/superadmin.js";
 import profileRoutes from "./routes/profile.js";
 import reviewRoutes from "./routes/reviews.js";
 import paymentRoutes from "./routes/payments.js";
+import eventsRoutes from "./routes/events.js";
 import "./models/Payment.js";
 
 setupCourseAssociations(User);
@@ -64,6 +65,7 @@ app.use("/api/superadmin", superAdminRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/events", eventsRoutes);
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get("/", (req, res) => res.send("API is running"));
