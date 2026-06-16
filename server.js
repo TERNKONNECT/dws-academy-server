@@ -4,6 +4,8 @@ import { pathToFileURL } from "url";
 import { connectDB } from "./config/db.js";
 import User from "./models/User.js";
 import { setupCourseAssociations } from "./models/Course.js";
+import Event, { setupEventAssociations } from "./models/Event.js";
+import EventImage, { setupEventImageAssociations } from "./models/EventImage.js";
 import authRoutes from "./routes/auth.js";
 import courseRoutes from "./routes/courses.js";
 import moduleRoutes from "./routes/modules.js";
@@ -18,6 +20,8 @@ import eventsRoutes from "./routes/events.js";
 import "./models/Payment.js";
 
 setupCourseAssociations(User);
+setupEventAssociations(EventImage);
+setupEventImageAssociations(Event);
 const dbReady = connectDB(); // Connect and apply additive schema guards once at startup
 
 const app = express();
