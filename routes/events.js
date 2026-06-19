@@ -1,8 +1,10 @@
 import express from "express";
+import path from "path";
 import { protect, superAdminOnly } from "../middleware/auth.js";
 import Event from "../models/Event.js";
 import EventImage from "../models/EventImage.js";
-import { createUploadUrl, deleteFile } from "../config/storage.js";
+import { createUploadUrl, deleteFile, getFileUrl } from "../config/storage.js";
+import cloudinary from "../config/cloudinary.js";
 
 const router = express.Router();
 
@@ -14,11 +16,21 @@ router.get("/", async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const formattedEvents = events.map((event) => {
-      const e = event.toJSON();
-      if (!e.date) delete e.date;
-      return e;
-    });
+    const formattedEvents = await Promise.all(
+      events.map(async (event) => {
+        const e = event.toJSON();
+        if (!e.date) delete e.date;
+        if (e.images) {
+          e.images = await Promise.all(
+            e.images.map(async (img) => ({
+              ...img,
+              url: await getFileUrl(img.key, img.url),
+            }))
+          );
+        }
+        return e;
+      })
+    );
 
     res.json(formattedEvents);
   } catch (err) {
@@ -61,6 +73,15 @@ router.delete("/:id", protect, superAdminOnly, async (req, res) => {
   }
 });
 
+const getRawBody = (req) => {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", (err) => reject(err));
+  });
+};
+
 // SuperAdmin: Get presigned URL for uploading an image
 router.post("/:id/images/presigned-url", protect, superAdminOnly, async (req, res) => {
   try {
@@ -71,8 +92,52 @@ router.post("/:id/images/presigned-url", protect, superAdminOnly, async (req, re
     const safeEventName = event.name.replace(/[^a-zA-Z0-9_-]/g, "_");
     const folder = `gallery/${safeEventName}`;
 
-    const uploadData = await createUploadUrl({ filename, contentType, folder });
-    res.json(uploadData); // { uploadUrl, key, url }
+    if (process.env.NODE_ENV === "production") {
+      const uploadData = await createUploadUrl({ filename, contentType, folder });
+      res.json(uploadData); // { uploadUrl, key, url }
+    } else {
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const ext = path.extname(safeName) || ".jpg";
+      const baseName = path.parse(safeName).name;
+      const key = `${folder}/${Date.now()}-${baseName}`;
+
+      const host = req.get("host");
+      const protocol = req.protocol;
+      const uploadUrl = `${protocol}://${host}/api/events/${req.params.id}/images/dev-upload?key=${encodeURIComponent(key)}`;
+
+      const url = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload/${key}${ext}`;
+
+      res.json({ uploadUrl, key, url });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// SuperAdmin: Dev endpoint to handle local file upload to Cloudinary via PUT
+router.put("/:id/images/dev-upload", protect, superAdminOnly, async (req, res) => {
+  try {
+    const key = req.query.key;
+    if (!key) return res.status(400).json({ error: "Key query parameter is required" });
+
+    const buffer = await getRawBody(req);
+
+    await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          public_id: key,
+          resource_type: "image",
+          overwrite: true,
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(buffer);
+    });
+
+    res.json({ message: "Dev image uploaded to Cloudinary successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -95,7 +160,17 @@ router.post("/:id/images", protect, superAdminOnly, async (req, res) => {
       images.map((img) => ({ eventId, url: img.url, key: img.key }))
     );
 
-    res.status(201).json(createdImages);
+    const formattedCreatedImages = await Promise.all(
+      createdImages.map(async (img) => {
+        const imgJson = img.toJSON();
+        return {
+          ...imgJson,
+          url: await getFileUrl(imgJson.key, imgJson.url),
+        };
+      })
+    );
+
+    res.status(201).json(formattedCreatedImages);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

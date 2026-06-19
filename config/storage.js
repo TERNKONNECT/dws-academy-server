@@ -94,11 +94,20 @@ export const deleteFile = async (id, resourceType = "image") => {
 
 export const getFileUrl = async (id, fallbackUrl = "") => {
   if (!id) return fallbackUrl;
-  if (process.env.NODE_ENV !== "production" || !s3) return fallbackUrl;
 
-  return s3.getSignedUrlPromise("getObject", {
-    Bucket: process.env.AWS_S3_BUCKET_NAME,
-    Key: id,
-    Expires: 60 * 60,
-  });
+  const isS3Url = fallbackUrl && fallbackUrl.includes("amazonaws.com");
+  if ((process.env.NODE_ENV === "production" || isS3Url) && s3) {
+    try {
+      return await s3.getSignedUrlPromise("getObject", {
+        Bucket: process.env.AWS_S3_BUCKET_NAME,
+        Key: id,
+        Expires: 60 * 60,
+      });
+    } catch (err) {
+      console.error("Failed to sign S3 URL:", err);
+      return fallbackUrl;
+    }
+  }
+
+  return fallbackUrl;
 };
