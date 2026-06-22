@@ -21,39 +21,54 @@ let connectionPromise = null;
 
 async function ensureUserInviteColumns() {
   const queryInterface = sequelize.getQueryInterface();
-  const table = await queryInterface.describeTable("users");
+  let table;
+  try {
+    table = await queryInterface.describeTable("users");
+  } catch (err) {
+    console.log("users table not found, skipping user invite columns");
+  }
 
-  const columns = [
-    ["adminInviteToken", { type: DataTypes.STRING, allowNull: true }],
-    ["adminInviteExpires", { type: DataTypes.DATE, allowNull: true }],
-    [
-      "passwordSetupRequired",
-      { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    ],
-    ["isBlocked", { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }],
-  ];
+  if (table) {
+    const columns = [
+      ["adminInviteToken", { type: DataTypes.STRING, allowNull: true }],
+      ["adminInviteExpires", { type: DataTypes.DATE, allowNull: true }],
+      [
+        "passwordSetupRequired",
+        { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      ],
+      ["isBlocked", { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }],
+    ];
 
-  for (const [columnName, definition] of columns) {
-    if (!table[columnName]) {
-      await queryInterface.addColumn("users", columnName, definition);
-      console.log(`Added missing users.${columnName} column`);
+    for (const [columnName, definition] of columns) {
+      if (!table[columnName]) {
+        await queryInterface.addColumn("users", columnName, definition);
+        console.log(`Added missing users.${columnName} column`);
+      }
     }
   }
 
-  const courseTable = await queryInterface.describeTable("courses");
-  const courseColumns = [
-    [
-      "pricingType",
-      { type: DataTypes.ENUM("free", "paid"), allowNull: false, defaultValue: "free" },
-    ],
-    ["price", { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }],
-    ["currency", { type: DataTypes.STRING, allowNull: false, defaultValue: "NGN" }],
-  ];
+  let courseTable;
+  try {
+    courseTable = await queryInterface.describeTable("courses");
+  } catch (err) {
+    console.log("courses table not found, skipping course columns");
+  }
 
-  for (const [columnName, definition] of courseColumns) {
-    if (!courseTable[columnName]) {
-      await queryInterface.addColumn("courses", columnName, definition);
-      console.log(`Added missing courses.${columnName} column`);
+  if (courseTable) {
+    const courseColumns = [
+      [
+        "pricingType",
+        { type: DataTypes.ENUM("free", "paid"), allowNull: false, defaultValue: "free" },
+      ],
+      ["price", { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }],
+      ["currency", { type: DataTypes.STRING, allowNull: false, defaultValue: "NGN" }],
+    ];
+
+    for (const [columnName, definition] of courseColumns) {
+      if (!courseTable[columnName]) {
+        await queryInterface.addColumn("courses", columnName, definition);
+        console.log(`Added missing courses.${columnName} column`);
+      }
     }
   }
 }
@@ -62,6 +77,10 @@ async function ensurePaymentTable() {
   const queryInterface = sequelize.getQueryInterface();
   const tables = await queryInterface.showAllTables();
   if (tables.includes("payments")) return;
+  if (!tables.includes("users") || !tables.includes("courses")) {
+    console.log("users or courses table not found, skipping payments table creation");
+    return;
+  }
 
   await queryInterface.createTable("payments", {
     id: {
@@ -118,6 +137,11 @@ async function ensureEventTables() {
   }
 
   if (!tables.includes("event_images")) {
+    const currentTables = await queryInterface.showAllTables();
+    if (!currentTables.includes("events")) {
+      console.log("events table not found, skipping event_images table creation");
+      return;
+    }
     await queryInterface.createTable("event_images", {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       eventId: {
