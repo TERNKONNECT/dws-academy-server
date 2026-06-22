@@ -41,5 +41,6 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
-
-scripts/
+scripts/create-admin.js
+.gitignore
+scripts/create-super-admin.js
