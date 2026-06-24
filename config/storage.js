@@ -100,8 +100,11 @@ export const deleteFile = async (id, resourceType = "image") => {
 export const getFileUrl = async (id, fallbackUrl = "") => {
   if (!id) return fallbackUrl;
 
+  // Decide by where the file actually lives, not by NODE_ENV — the deployed
+  // backend always runs with NODE_ENV=production, so signing based on env
+  // alone mis-signs Cloudinary-hosted videos as if they were S3 keys.
   const isS3Url = fallbackUrl && fallbackUrl.includes("amazonaws.com");
-  if ((process.env.NODE_ENV === "production" || isS3Url) && s3) {
+  if (isS3Url && s3) {
     try {
       const command = new GetObjectCommand({
         Bucket: process.env.AWS_S3_BUCKET_NAME,
