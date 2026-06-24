@@ -68,10 +68,14 @@ function getAuthUser(req) {
 
 async function hasCourseAccess(req, course) {
   const authUser = getAuthUser(req);
+  // 1️⃣ No auth – never grant full access (preview only for any course)
   if (!authUser) return false;
-  if (authUser.role === "super-admin") return true;
-  if (authUser.role === "admin" && course.createdBy === authUser.id) return true;
 
+  // 2️⃣ Privileged roles – super‑admin, admin, instructor, staff can see everything
+  const privilegedRoles = ["super-admin", "admin", "instructor", "staff"];
+  if (privilegedRoles.includes(authUser.role)) return true;
+
+  // 3️⃣ Regular users – require enrollment regardless of free/paid status
   const enrollment = await Enrollment.findOne({
     where: { userId: authUser.id, courseId: course.id },
   });
@@ -129,8 +133,7 @@ router.get("/:id", async (req, res) => {
   try {
     const course = await Course.findByPk(req.params.id);
     if (!course) return res.status(404).json({ error: "Course not found" });
-    const isPaid = course.pricingType === "paid" && Number(course.price) > 0;
-    const canAccessContent = !isPaid || (await hasCourseAccess(req, course));
+    const canAccessContent = await hasCourseAccess(req, course);
 
     const modules = await Module.findAll({
       where: { courseId: req.params.id },
