@@ -274,6 +274,10 @@ router.post("/login", async (req, res) => {
     const user = await User.findOne({ where: { email: normalizeEmail(email) } });
     if (!user || !(await user.comparePassword(password)))
       return res.status(401).json({ error: "Invalid email or password" });
+    if (user.deactivatedAt)
+      return res.status(403).json({
+        error: "This account has been deactivated. Contact support to reactivate.",
+      });
     if (user.role === "admin" && user.passwordSetupRequired)
       return res.status(403).json({
         error: "Please accept your admin invitation and create a password first.",
@@ -332,6 +336,55 @@ router.post("/reset-password", async (req, res) => {
     await user.save();
 
     res.json({ message: "Password reset successful. You can now log in." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/auth/password — change password for the logged-in user
+router.put("/password", protect, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password are required" });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "New password must be at least 6 characters" });
+    }
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    if (!(await user.comparePassword(currentPassword))) {
+      return res.status(401).json({ error: "Incorrect current password" });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    res.json({ message: "Password updated successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/deactivate — self-service account deactivation
+router.post("/deactivate", protect, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: "Password is required" });
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    if (!(await user.comparePassword(password))) {
+      return res.status(401).json({ error: "Incorrect password" });
+    }
+
+    user.deactivatedAt = new Date();
+    await user.save();
+
+    res.json({ message: "Account deactivated." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

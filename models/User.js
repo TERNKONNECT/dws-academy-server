@@ -30,6 +30,7 @@ const User = sequelize.define(
     avatar: { type: DataTypes.STRING, defaultValue: "" },
     avatarCloudinaryId: { type: DataTypes.STRING, defaultValue: "" },
     isBlocked: { type: DataTypes.BOOLEAN, defaultValue: false },
+    deactivatedAt: { type: DataTypes.DATE, allowNull: true },
   },
   { tableName: "users", timestamps: true },
 );
