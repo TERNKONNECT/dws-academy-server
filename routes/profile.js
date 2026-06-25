@@ -1,7 +1,7 @@
 import express from "express";
 import multer from "multer";
 import User from "../models/User.js";
-import { protect, adminOnly } from "../middleware/auth.js";
+import { protect } from "../middleware/auth.js";
 import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
 
 const router = express.Router();
@@ -22,7 +22,7 @@ async function serializeProfile(user) {
 }
 
 // GET /api/profile — get logged-in admin's profile
-router.get("/", protect, adminOnly, async (req, res) => {
+router.get("/", protect, async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       attributes: [
@@ -45,7 +45,7 @@ router.get("/", protect, adminOnly, async (req, res) => {
 });
 
 // PUT /api/profile — update name, title, bio
-router.put("/", protect, adminOnly, async (req, res) => {
+router.put("/", protect, async (req, res) => {
   try {
     const { name, title, bio } = req.body;
     const user = await User.findByPk(req.user.id);
@@ -61,7 +61,6 @@ router.put("/", protect, adminOnly, async (req, res) => {
 router.post(
   "/avatar",
   protect,
-  adminOnly,
   upload.single("avatar"),
   async (req, res) => {
     try {
@@ -112,7 +111,7 @@ router.get("/:adminId", async (req, res) => {
 });
 
 // POST /api/profile/avatar-url — save avatar URL from Cloudinary
-router.post("/avatar-url", protect, adminOnly, async (req, res) => {
+router.post("/avatar-url", protect, async (req, res) => {
   try {
     const { avatar, avatarCloudinaryId } = req.body;
     if (!avatar)
