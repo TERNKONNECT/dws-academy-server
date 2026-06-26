@@ -18,6 +18,7 @@ import reviewRoutes from "./routes/reviews.js";
 import paymentRoutes from "./routes/payments.js";
 import eventsRoutes from "./routes/events.js";
 import "./models/Payment.js";
+import "./models/QuizAttempt.js";
 
 setupCourseAssociations(User);
 setupEventAssociations(EventImage);
@@ -64,6 +65,7 @@ app.use("/api/courses", courseRoutes);
 app.use("/api/courses/:courseId/modules", moduleRoutes);
 app.use("/api/courses/:courseId/modules/:moduleId/lessons", lessonRoutes);
 app.use("/api/courses/:courseId/modules/:moduleId/quiz", quizRoutes);
+app.use("/api/quizzes", quizRoutes);
 app.use("/api/enrollments", enrollmentRoutes);
 app.use("/api/superadmin", superAdminRoutes);
 app.use("/api/profile", profileRoutes);

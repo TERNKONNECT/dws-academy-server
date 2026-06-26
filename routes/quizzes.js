@@ -1,9 +1,148 @@
 import express from "express";
 import Quiz from "../models/Quiz.js";
 import Module from "../models/Module.js";
+import Course from "../models/Course.js";
+import Enrollment from "../models/Enrollment.js";
+import QuizAttempt from "../models/QuizAttempt.js";
 import { protect, adminOnly } from "../middleware/auth.js";
 
 const router = express.Router({ mergeParams: true });
+
+const privilegedRoles = ["super-admin", "admin", "instructor", "staff"];
+
+function normalizeQuestion(question, index) {
+  const options =
+    question.options ??
+    [question.optionA, question.optionB, question.optionC, question.optionD].filter(
+      (option) => option !== undefined && option !== null,
+    );
+  const correctAnswer =
+    question.correctIndex ??
+    question.correctAnswer ??
+    (typeof question.answer === "number" ? question.answer : undefined);
+
+  return {
+    ...question,
+    _id: question._id ?? question.id ?? `q-${index}`,
+    text: question.text ?? question.question ?? "",
+    options: Array.isArray(options) ? options : [],
+    correctIndex: Number.isInteger(correctAnswer) ? correctAnswer : 0,
+    type: question.type === "theory" ? "theory" : "mcq",
+    sampleAnswer: question.sampleAnswer ?? "",
+  };
+}
+
+function serializeQuiz(quiz) {
+  const data = quiz.toJSON ? quiz.toJSON() : quiz;
+  return {
+    ...data,
+    questions: (data.questions ?? []).map(normalizeQuestion),
+  };
+}
+
+async function getQuizCourse(quiz) {
+  const mod = await Module.findByPk(quiz.moduleId);
+  if (!mod) return { module: null, course: null };
+  const course = await Course.findByPk(mod.courseId);
+  return { module: mod, course };
+}
+
+async function requireQuizAccess(req, quiz) {
+  const { module, course } = await getQuizCourse(quiz);
+  if (!module || !course) return { allowed: false, status: 404 };
+  if (privilegedRoles.includes(req.user.role)) {
+    return { allowed: true, module, course };
+  }
+  const enrollment = await Enrollment.findOne({
+    where: { userId: req.user.id, courseId: course.id },
+  });
+  if (!enrollment) return { allowed: false, status: 403 };
+  return { allowed: true, module, course, enrollment };
+}
+
+function gradeQuiz(quiz, answers = {}) {
+  const questions = (quiz.questions ?? []).map(normalizeQuestion);
+  const gradable = questions.filter((question) => question.type !== "theory");
+  const score = gradable.reduce((total, question) => {
+    const answer = answers[question._id] ?? answers[question.id];
+    return total + (Number(answer) === question.correctIndex ? 1 : 0);
+  }, 0);
+  const percentage =
+    gradable.length > 0 ? Math.round((score / gradable.length) * 100) : 100;
+
+  return {
+    score,
+    totalQuestions: gradable.length,
+    percentage,
+    passed: percentage >= 80,
+  };
+}
+
+// GET quiz directly by id for learners taking quizzes
+router.get("/:quizId", protect, async (req, res) => {
+  try {
+    const quiz = await Quiz.findByPk(req.params.quizId);
+    if (!quiz) return res.status(404).json({ error: "Quiz not found" });
+
+    const access = await requireQuizAccess(req, quiz);
+    if (!access.allowed) {
+      return res
+        .status(access.status || 403)
+        .json({ error: "Not authorized to access this quiz" });
+    }
+
+    res.json({ ...serializeQuiz(quiz), courseId: access.course.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST submit quiz answers and persist the graded attempt
+router.post("/:quizId/submit", protect, async (req, res) => {
+  try {
+    const quiz = await Quiz.findByPk(req.params.quizId);
+    if (!quiz) return res.status(404).json({ error: "Quiz not found" });
+
+    const access = await requireQuizAccess(req, quiz);
+    if (!access.allowed) {
+      return res
+        .status(access.status || 403)
+        .json({ error: "Not authorized to submit this quiz" });
+    }
+
+    if (!access.enrollment) {
+      return res
+        .status(403)
+        .json({ error: "Only enrolled students can submit quiz attempts" });
+    }
+
+    const answers = req.body.answers ?? {};
+    const result = gradeQuiz(serializeQuiz(quiz), answers);
+    const attempt = await QuizAttempt.create({
+      enrollmentId: access.enrollment.id,
+      quizId: quiz.id,
+      answers,
+      ...result,
+      completedAt: new Date(),
+    });
+
+    if (result.passed) {
+      await access.enrollment.update({
+        isCompleted: true,
+        completedAt: access.enrollment.completedAt ?? new Date(),
+      });
+    }
+
+    res.status(201).json({
+      attemptId: attempt.id,
+      quiz: { ...serializeQuiz(quiz), courseId: access.course.id },
+      ...result,
+      completedAt: attempt.completedAt,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET quiz for a module
 router.get("/", async (req, res) => {
@@ -13,7 +152,7 @@ router.get("/", async (req, res) => {
     });
     if (!quiz)
       return res.status(404).json({ error: "No quiz for this module" });
-    res.json(quiz);
+    res.json(serializeQuiz(quiz));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
