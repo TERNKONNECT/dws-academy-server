@@ -121,6 +121,48 @@ async function ensurePaymentTable() {
   console.log("Created missing payments table");
 }
 
+async function ensureQuizAttemptTable() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+  if (tables.includes("quiz_attempts")) return;
+  if (
+    !tables.includes("enrollments") ||
+    !tables.includes("quizzes")
+  ) {
+    console.log("enrollments or quizzes table not found, skipping quiz_attempts table creation");
+    return;
+  }
+
+  await queryInterface.createTable("quiz_attempts", {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    enrollmentId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: "enrollments", key: "id" },
+      onDelete: "CASCADE",
+    },
+    quizId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: "quizzes", key: "id" },
+      onDelete: "CASCADE",
+    },
+    answers: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+    score: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    totalQuestions: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    percentage: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    passed: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    completedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  });
+  console.log("Created missing quiz_attempts table");
+}
+
 async function ensureEventTables() {
   const queryInterface = sequelize.getQueryInterface();
   const tables = await queryInterface.showAllTables();
@@ -168,6 +210,7 @@ export async function connectDB() {
       await sequelize.authenticate();
       await ensureUserInviteColumns();
       await ensurePaymentTable();
+      await ensureQuizAttemptTable();
       await ensureEventTables();
       isConnected = true;
       console.log("PostgreSQL connected");

@@ -5,6 +5,7 @@ import { setupCourseAssociations } from "../models/Course.js";
 import "../models/Module.js";
 import "../models/Lesson.js";
 import "../models/Quiz.js";
+import "../models/QuizAttempt.js";
 import "../models/Enrollment.js";
 import "../models/LessonProgress.js";
 import "../models/Review.js";
