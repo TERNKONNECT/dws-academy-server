@@ -88,11 +88,20 @@ router.post(
   protect,
   async (req, res) => {
     try {
-      const enrollment = await Enrollment.findOne({
+      let enrollment = await Enrollment.findOne({
         where: { userId: req.user.id, courseId: req.params.courseId },
       });
-      if (!enrollment)
-        return res.status(404).json({ error: "Not enrolled in this course" });
+
+      if (!enrollment) {
+        if (req.user.role === "admin" || req.user.role === "super-admin") {
+          enrollment = await Enrollment.create({
+            userId: req.user.id,
+            courseId: req.params.courseId,
+          });
+        } else {
+          return res.status(404).json({ error: "Not enrolled in this course" });
+        }
+      }
 
       const lesson = await Lesson.findByPk(req.params.lessonId);
       if (!lesson) return res.status(404).json({ error: "Lesson not found" });
