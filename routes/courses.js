@@ -122,6 +122,8 @@ router.get("/", async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
+    // private: different users see different sets (enrolled/published filter)
+    res.set("Cache-Control", "private, max-age=60");
     res.json(await Promise.all(courses.map(serializeCourse)));
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -19,6 +19,8 @@ export const uploadFile = async (file, folder = "uploads") => {
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype,
+      // Keys include Date.now() so they're unique — safe to cache for 1 year
+      CacheControl: "public, max-age=31536000, immutable",
     };
     const command = new PutObjectCommand(params);
     await s3.send(command);
