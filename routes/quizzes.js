@@ -144,9 +144,13 @@ router.post("/:quizId/submit", protect, async (req, res) => {
   }
 });
 
-// GET quiz for a module
+// GET quiz for a module (or all quizzes if moduleId not present)
 router.get("/", async (req, res) => {
   try {
+    if (!req.params.moduleId) {
+      const quizzes = await Quiz.findAll();
+      return res.json(quizzes.map(serializeQuiz));
+    }
     const quiz = await Quiz.findOne({
       where: { moduleId: req.params.moduleId },
     });
