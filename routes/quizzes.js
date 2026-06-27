@@ -111,6 +111,17 @@ router.post("/:quizId/submit", protect, async (req, res) => {
     }
 
     if (!access.enrollment) {
+      // Admins/super-admins can preview quiz results without persisting
+      if (privilegedRoles.includes(req.user.role)) {
+        const answers = req.body.answers ?? {};
+        const result = gradeQuiz(serializeQuiz(quiz), answers);
+        return res.status(200).json({
+          preview: true,
+          quiz: { ...serializeQuiz(quiz), courseId: access.course.id },
+          ...result,
+          completedAt: new Date(),
+        });
+      }
       return res
         .status(403)
         .json({ error: "Only enrolled students can submit quiz attempts" });
