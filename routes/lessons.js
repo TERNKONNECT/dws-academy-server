@@ -21,6 +21,11 @@ async function serializeLesson(lesson) {
       data.type === "video"
         ? await getFileUrl(data.cloudinaryId, data.videoUrl)
         : data.videoUrl,
+    documentUrl: await getFileUrl(data.documentCloudinaryId, data.documentUrl),
+    transcriptUrl: await getFileUrl(
+      data.transcriptCloudinaryId,
+      data.transcriptUrl,
+    ),
   };
 }
 
@@ -140,6 +145,70 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
   }
 });
 
+// POST upload lesson document
+router.post(
+  "/:id/document",
+  protect,
+  adminOnly,
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const lesson = await Lesson.findOne({
+        where: { id: req.params.id, moduleId: req.params.moduleId },
+      });
+      if (!lesson) return res.status(404).json({ error: "Lesson not found" });
+      if (!req.file)
+        return res.status(400).json({ error: "No document file uploaded" });
+
+      if (lesson.documentCloudinaryId) {
+        await deleteFile(lesson.documentCloudinaryId, "raw");
+      }
+
+      const fileData = await uploadFile(req.file, "lms/documents");
+      await lesson.update({
+        documentUrl: fileData.url,
+        documentCloudinaryId: fileData.id,
+      });
+
+      res.json(await serializeLesson(lesson));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// POST upload lesson transcript
+router.post(
+  "/:id/transcript",
+  protect,
+  adminOnly,
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const lesson = await Lesson.findOne({
+        where: { id: req.params.id, moduleId: req.params.moduleId },
+      });
+      if (!lesson) return res.status(404).json({ error: "Lesson not found" });
+      if (!req.file)
+        return res.status(400).json({ error: "No transcript file uploaded" });
+
+      if (lesson.transcriptCloudinaryId) {
+        await deleteFile(lesson.transcriptCloudinaryId, "raw");
+      }
+
+      const fileData = await uploadFile(req.file, "lms/transcripts");
+      await lesson.update({
+        transcriptUrl: fileData.url,
+        transcriptCloudinaryId: fileData.id,
+      });
+
+      res.json(await serializeLesson(lesson));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
 // DELETE lesson
 router.delete("/:id", protect, adminOnly, async (req, res) => {
   try {
@@ -150,6 +219,12 @@ router.delete("/:id", protect, adminOnly, async (req, res) => {
 
     if (lesson.cloudinaryId) {
       await deleteFile(lesson.cloudinaryId, "video");
+    }
+    if (lesson.documentCloudinaryId) {
+      await deleteFile(lesson.documentCloudinaryId, "raw");
+    }
+    if (lesson.transcriptCloudinaryId) {
+      await deleteFile(lesson.transcriptCloudinaryId, "raw");
     }
 
     await lesson.destroy();

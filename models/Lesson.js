@@ -21,6 +21,10 @@ const Lesson = sequelize.define(
     videoUrl: { type: DataTypes.STRING, defaultValue: "" }, // cloudinary URL for video lessons
     cloudinaryId: { type: DataTypes.STRING, defaultValue: "" },
     duration: { type: DataTypes.STRING, defaultValue: "" },
+    documentUrl: { type: DataTypes.STRING, defaultValue: "" }, // cloudinary URL for attached document
+    documentCloudinaryId: { type: DataTypes.STRING, defaultValue: "" },
+    transcriptUrl: { type: DataTypes.STRING, defaultValue: "" }, // cloudinary URL for attached transcript
+    transcriptCloudinaryId: { type: DataTypes.STRING, defaultValue: "" },
     order: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
   },
   { tableName: "lessons", timestamps: true },
