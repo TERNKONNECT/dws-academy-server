@@ -88,11 +88,29 @@ router.post(
   protect,
   async (req, res) => {
     try {
+      const isPrivileged =
+        req.user.role === "admin" || req.user.role === "super-admin";
+
       const enrollment = await Enrollment.findOne({
         where: { userId: req.user.id, courseId: req.params.courseId },
       });
-      if (!enrollment)
+
+      // Admins/super-admins can preview without an enrollment record
+      if (!enrollment && isPrivileged) {
+        return res.json({
+          lessonId: req.params.lessonId,
+          preview: true,
+          alreadyCompleted: false,
+          totalLessons: 0,
+          completedLessons: 0,
+          progressPct: 0,
+          courseCompleted: false,
+        });
+      }
+
+      if (!enrollment) {
         return res.status(404).json({ error: "Not enrolled in this course" });
+      }
 
       const lesson = await Lesson.findByPk(req.params.lessonId);
       if (!lesson) return res.status(404).json({ error: "Lesson not found" });
@@ -143,7 +161,26 @@ router.get("/:courseId/progress", protect, async (req, res) => {
     const enrollment = await Enrollment.findOne({
       where: { userId: req.user.id, courseId: req.params.courseId },
     });
-    if (!enrollment) return res.status(404).json({ error: "Not enrolled" });
+
+    // Admins/super-admins can preview without enrollment
+    if (!enrollment) {
+      const isPrivileged =
+        req.user.role === "admin" || req.user.role === "super-admin";
+      if (isPrivileged) {
+        return res.json({
+          preview: true,
+          enrollmentId: null,
+          enrolledAt: null,
+          isCompleted: false,
+          completedAt: null,
+          totalLessons: 0,
+          completedLessons: 0,
+          progressPct: 0,
+          completedLessonIds: [],
+        });
+      }
+      return res.status(404).json({ error: "Not enrolled" });
+    }
 
     const completedLessons = await LessonProgress.findAll({
       where: { enrollmentId: enrollment.id },
