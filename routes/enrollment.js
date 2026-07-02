@@ -216,6 +216,61 @@ router.get("/:courseId/progress", protect, async (req, res) => {
 
 // ── Admin endpoints ───────────────────────────────────────────────────────────
 
+// POST /api/enrollments/admin/enroll — admin/instructor enrolls a user by email
+router.post("/admin/enroll", protect, adminOnly, async (req, res) => {
+  try {
+    const { email, courseId } = req.body;
+
+    if (!email || !courseId) {
+      return res
+        .status(400)
+        .json({ error: "Email and courseId are required" });
+    }
+
+    // Look up the user by email
+    const user = await User.findOne({
+      where: { email: email.toLowerCase().trim() },
+    });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ error: "No registered user found with that email" });
+    }
+
+    // Verify the course exists
+    const course = await Course.findByPk(courseId);
+    if (!course) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    // Check for existing enrollment
+    const [enrollment, created] = await Enrollment.findOrCreate({
+      where: { userId: user.id, courseId },
+      defaults: { userId: user.id, courseId },
+    });
+
+    if (!created) {
+      return res
+        .status(400)
+        .json({ error: "This user is already enrolled in this course" });
+    }
+
+    res.status(201).json({
+      message: `${user.name} has been enrolled successfully`,
+      enrollment: {
+        enrollmentId: enrollment.id,
+        enrolledAt: enrollment.createdAt,
+        isCompleted: false,
+        completedAt: null,
+        user: { id: user.id, name: user.name, email: user.email },
+        course: { id: course.id, title: course.title },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/enrollments/admin/all — all enrollments across all courses
 router.get("/admin/all", protect, adminOnly, async (req, res) => {
   try {
