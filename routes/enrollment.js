@@ -216,7 +216,7 @@ router.get("/:courseId/progress", protect, async (req, res) => {
 
 // ── Admin endpoints ───────────────────────────────────────────────────────────
 
-// POST /api/enrollments/admin/enroll — admin/instructor enrolls a user by email
+// POST /api/enrollments/admin/enroll — admin/instructor enrolls a registered user by email
 router.post("/admin/enroll", protect, adminOnly, async (req, res) => {
   try {
     const { email, courseId } = req.body;
@@ -234,7 +234,7 @@ router.post("/admin/enroll", protect, adminOnly, async (req, res) => {
     if (!user) {
       return res
         .status(404)
-        .json({ error: "No registered user found with that email" });
+        .json({ error: "User does not exist on the platform" });
     }
 
     // Verify the course exists
