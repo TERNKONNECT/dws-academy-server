@@ -67,8 +67,23 @@ function validatePaystackConfirmation(payment, paystackData = {}) {
   if (paystackData.reference !== payment.reference) {
     throw new Error("Payment reference mismatch");
   }
-  if (Number(paystackData.amount) !== toKobo(payment.amount)) {
-    throw new Error("Payment amount mismatch");
+  const paidAmountKobo = Number(paystackData.amount);
+  const expectedAmountKobo = toKobo(payment.amount);
+  if (paidAmountKobo < expectedAmountKobo) {
+    throw new Error(
+      `Payment amount too low: paid ${paidAmountKobo} kobo, expected at least ${expectedAmountKobo} kobo`
+    );
+  }
+  if (paidAmountKobo > expectedAmountKobo) {
+    // Paystack transaction fees borne by the customer cause the paid amount
+    // to exceed the base price – this is expected on live keys.
+    paymentLog("info", "confirmation_fee_detected", {
+      reference: payment.reference,
+      paymentId: payment.id,
+      expectedAmountKobo,
+      paidAmountKobo,
+      feeDifferenceKobo: paidAmountKobo - expectedAmountKobo,
+    });
   }
   if (
     String(paystackData.currency || "").toUpperCase() !==
