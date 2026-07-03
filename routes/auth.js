@@ -3,7 +3,6 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import User from "../models/User.js";
 import {
-  appUrl,
   passwordResetEmailTemplate,
   sendEmail,
   verificationEmailTemplate,
@@ -34,24 +33,23 @@ const normalizeEmail = (email) => email.toLowerCase().trim();
 const tokenExpiry = (minutes) => new Date(Date.now() + minutes * 60 * 1000);
 
 async function sendVerificationEmail(user) {
-  const token = crypto.randomBytes(32).toString("hex");
-  user.emailVerificationToken = hashValue(token);
-  user.emailVerificationExpires = tokenExpiry(60 * 24);
+  const otp = String(crypto.randomInt(100000, 1000000));
+  user.emailVerificationToken = hashValue(otp);
+  user.emailVerificationExpires = tokenExpiry(15);
   await user.save();
 
-  const link = appUrl(`/verify-email?token=${token}&email=${encodeURIComponent(user.email)}`);
   const emailResult = await sendEmail({
     to: user.email,
     subject: "Verify your DWS Academy account",
-    html: verificationEmailTemplate({ name: user.name, link }),
+    html: verificationEmailTemplate({ name: user.name, otp }),
   });
 
   if (emailResult?.skipped) {
-    console.warn(`Verification link for ${user.email}: ${link}`);
+    console.warn(`Verification code for ${user.email}: ${otp}`);
   }
 
   return {
-    link,
+    otp,
     skipped: Boolean(emailResult?.skipped),
   };
 }
@@ -93,11 +91,11 @@ router.post("/register", async (req, res) => {
         const verification = await sendVerificationEmail(exists);
         return res.status(200).json({
           message: verification.skipped
-            ? "Account updated. Verification email could not be sent in Resend testing mode. Use the verification link from the server logs."
-            : "Account updated. Verification email resent. Check your inbox.",
-          verificationLink:
+            ? "Account updated. Verification email could not be sent in Resend testing mode. Use the verification code from the server logs."
+            : "Account updated. Verification code resent. Check your inbox.",
+          verificationOtp:
             verification.skipped && process.env.NODE_ENV !== "production"
-              ? verification.link
+              ? verification.otp
               : undefined,
         });
       }
@@ -116,11 +114,11 @@ router.post("/register", async (req, res) => {
     const verification = await sendVerificationEmail(user);
     res.status(201).json({
       message: verification.skipped
-        ? "Account created. Verification email could not be sent in Resend testing mode. Use the verification link from the server logs."
-        : "Account created. Check your email to verify your account.",
-      verificationLink:
+        ? "Account created. Verification email could not be sent in Resend testing mode. Use the verification code from the server logs."
+        : "Account created. Check your email for a verification code.",
+      verificationOtp:
         verification.skipped && process.env.NODE_ENV !== "production"
-          ? verification.link
+          ? verification.otp
           : undefined,
     });
   } catch (err) {
@@ -128,11 +126,11 @@ router.post("/register", async (req, res) => {
   }
 });
 
-router.get("/verify-email", async (req, res) => {
+router.post("/verify-email", async (req, res) => {
   try {
-    const { token, email } = req.query;
-    if (!token || !email)
-      return res.status(400).json({ error: "Verification token is required" });
+    const { otp, email } = req.body;
+    if (!otp || !email)
+      return res.status(400).json({ error: "Verification code is required" });
 
     const user = await User.findOne({
       where: { email: normalizeEmail(String(email)) },
@@ -140,11 +138,11 @@ router.get("/verify-email", async (req, res) => {
 
     if (
       !user ||
-      user.emailVerificationToken !== hashValue(String(token)) ||
+      user.emailVerificationToken !== hashValue(String(otp)) ||
       !user.emailVerificationExpires ||
       user.emailVerificationExpires < new Date()
     ) {
-      return res.status(400).json({ error: "Invalid or expired verification link" });
+      return res.status(400).json({ error: "Invalid or expired verification code" });
     }
 
     user.emailVerified = true;
@@ -153,6 +151,32 @@ router.get("/verify-email", async (req, res) => {
     await user.save();
 
     res.json({ message: "Email verified. You can now log in." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/resend-verification — manually request a fresh verification code.
+// Never sent automatically; only fires when the user explicitly asks for it (e.g. their
+// original code expired or never arrived).
+router.post("/resend-verification", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const user = await User.findOne({
+      where: { email: normalizeEmail(String(email)) },
+    });
+    if (user && !user.emailVerified) {
+      await sendVerificationEmail(user);
+    }
+
+    // Same response whether or not the account exists/needs it, so this can't be used
+    // to probe which emails are registered.
+    res.json({
+      message:
+        "If an account with that email exists and isn't verified yet, a new verification code has been sent.",
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -285,6 +309,7 @@ router.post("/login", async (req, res) => {
     if (user.role === "user" && !user.emailVerified)
       return res.status(403).json({
         error: "Please verify your email before logging in.",
+        code: "EMAIL_NOT_VERIFIED",
       });
     res.json({ token: signToken(user), user: userPayload(user) });
   } catch (err) {
