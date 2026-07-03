@@ -23,6 +23,14 @@ const Enrollment = sequelize.define(
     },
     isCompleted: { type: DataTypes.BOOLEAN, defaultValue: false },
     completedAt: { type: DataTypes.DATE, allowNull: true },
+    // Set to the admin's user id when an admin/instructor enrolled this student
+    // via the "Enroll Student" feature; null means the student enrolled themself
+    // (free course or completed Paystack payment).
+    enrolledBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "users", key: "id" },
+    },
   },
   {
     tableName: "enrollments",
@@ -36,5 +44,7 @@ Enrollment.belongsTo(User, { foreignKey: "userId" });
 
 Course.hasMany(Enrollment, { foreignKey: "courseId", onDelete: "CASCADE" });
 Enrollment.belongsTo(Course, { foreignKey: "courseId" });
+
+Enrollment.belongsTo(User, { foreignKey: "enrolledBy", as: "EnrolledByAdmin" });
 
 export default Enrollment;

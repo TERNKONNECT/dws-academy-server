@@ -1,10 +1,12 @@
 import express from "express";
 import crypto from "crypto";
+import { Op } from "sequelize";
+import sequelize from "../config/db.js";
 import Course from "../models/Course.js";
 import Enrollment from "../models/Enrollment.js";
 import Payment from "../models/Payment.js";
 import User from "../models/User.js";
-import { protect } from "../middleware/auth.js";
+import { protect, adminOnly } from "../middleware/auth.js";
 import {
   initializePaystackTransaction,
   verifyPaystackTransaction,
@@ -389,6 +391,81 @@ router.post("/initialize", protect, async (req, res) => {
   }
 });
 
+// Calls Paystack to check a payment's real status, grants course access if it
+// has actually succeeded, and otherwise brings our local status in sync.
+// Shared by the student-facing verify route and the admin re-verify route,
+// since both are just "ask Paystack again" for a payment that's stuck.
+async function runPaymentVerification(payment, { actorId } = {}) {
+  paymentLog("info", "paystack_verify_requested", {
+    actorId,
+    paymentId: payment.id,
+    courseId: payment.courseId,
+    reference: payment.reference,
+    currentStatus: payment.status,
+  });
+
+  const data = await verifyPaystackTransaction(payment.reference);
+  paymentLog("info", "paystack_verify_succeeded", {
+    actorId,
+    paymentId: payment.id,
+    courseId: payment.courseId,
+    reference: payment.reference,
+    paystackStatus: data.status,
+    amountKobo: data.amount,
+    currency: data.currency,
+    gatewayResponse: data.gateway_response,
+  });
+
+  if (data.status === "success") {
+    await confirmAndGrantCourseAccess(payment, data);
+    paymentLog("info", "verify_success_access_granted", {
+      actorId,
+      paymentId: payment.id,
+      courseId: payment.courseId,
+      reference: payment.reference,
+    });
+    return {
+      httpStatus: 200,
+      body: {
+        status: "success",
+        courseId: payment.courseId,
+        courseTitle: payment.Course?.title,
+      },
+    };
+  }
+
+  const status = finalFailureStatuses.has(data.status) ? "failed" : "pending";
+  await payment.update({
+    status: data.status === "abandoned" ? "abandoned" : status,
+    gatewayResponse: data.gateway_response || data.status,
+    metadata: data,
+  });
+
+  const stillProcessing = status === "pending";
+  paymentLog("info", "verify_completed_without_access", {
+    actorId,
+    paymentId: payment.id,
+    courseId: payment.courseId,
+    reference: payment.reference,
+    paystackStatus: data.status,
+    storedStatus: payment.status,
+    stillProcessing,
+    accessGranted: false,
+  });
+
+  return {
+    httpStatus: stillProcessing ? 202 : 400,
+    body: {
+      status: payment.status,
+      error: stillProcessing
+        ? "Payment is still processing. Access will be granted after Paystack confirms the payment."
+        : data.gateway_response || "Payment was not successful",
+      courseId: payment.courseId,
+      courseTitle: payment.Course?.title,
+    },
+  };
+}
+
 router.get("/verify/:reference", protect, async (req, res) => {
   try {
     paymentLog("info", "verify_called", {
@@ -409,74 +486,293 @@ router.get("/verify/:reference", protect, async (req, res) => {
       return res.status(404).json({ error: "Payment not found" });
     }
 
-    paymentLog("info", "paystack_verify_requested", {
-      userId: req.user.id,
-      paymentId: payment.id,
-      courseId: payment.courseId,
-      reference: payment.reference,
-      currentStatus: payment.status,
-    });
-
-    const data = await verifyPaystackTransaction(payment.reference);
-    paymentLog("info", "paystack_verify_succeeded", {
-      userId: req.user.id,
-      paymentId: payment.id,
-      courseId: payment.courseId,
-      reference: payment.reference,
-      paystackStatus: data.status,
-      amountKobo: data.amount,
-      currency: data.currency,
-      gatewayResponse: data.gateway_response,
-    });
-
-    if (data.status === "success") {
-      await confirmAndGrantCourseAccess(payment, data);
-      paymentLog("info", "verify_success_access_granted", {
-        userId: req.user.id,
-        paymentId: payment.id,
-        courseId: payment.courseId,
-        reference: payment.reference,
-      });
-      return res.json({
-        status: "success",
-        courseId: payment.courseId,
-        courseTitle: payment.Course?.title,
-      });
-    }
-
-    const status = finalFailureStatuses.has(data.status) ? "failed" : "pending";
-    await payment.update({
-      status: data.status === "abandoned" ? "abandoned" : status,
-      gatewayResponse: data.gateway_response || data.status,
-      metadata: data,
-    });
-
-    const stillProcessing = status === "pending";
-    paymentLog("info", "verify_completed_without_access", {
-      userId: req.user.id,
-      paymentId: payment.id,
-      courseId: payment.courseId,
-      reference: payment.reference,
-      paystackStatus: data.status,
-      storedStatus: payment.status,
-      stillProcessing,
-      accessGranted: false,
-    });
-
-    res.status(stillProcessing ? 202 : 400).json({
-      status: payment.status,
-      error: stillProcessing
-        ? "Payment is still processing. Access will be granted after Paystack confirms the payment."
-        : data.gateway_response || "Payment was not successful",
-      courseId: payment.courseId,
-      courseTitle: payment.Course?.title,
-    });
+    const result = await runPaymentVerification(payment, { actorId: req.user.id });
+    res.status(result.httpStatus).json(result.body);
   } catch (err) {
     paymentLog("error", "verify_failed", {
       userId: req.user?.id,
       reference: req.params.reference,
       ...errorDetails(err),
     });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin endpoints ───────────────────────────────────────────────────────────
+// Instructor admins are scoped to courses they created; super-admin/operator see everything.
+
+// GET /api/payments/admin/courses/:courseId/pending — payments stuck pending for a course
+// (i.e. Paystack was never confirmed — usually a missed/failed webhook)
+router.get("/admin/courses/:courseId/pending", protect, adminOnly, async (req, res) => {
+  try {
+    const course = await Course.findByPk(req.params.courseId);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+    if (req.user.role !== "super-admin" && course.createdBy !== req.user.id) {
+      return res.status(403).json({ error: "Not authorized to view payments for this course" });
+    }
+
+    const payments = await Payment.findAll({
+      where: { courseId: req.params.courseId, status: "pending" },
+      include: [{ model: User, attributes: ["id", "name", "email"] }],
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.json(
+      payments.map((p) => ({
+        id: p.id,
+        reference: p.reference,
+        amount: p.amount,
+        currency: p.currency,
+        createdAt: p.createdAt,
+        user: p.User,
+      })),
+    );
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/payments/admin/verify/:reference — admin re-verifies any user's stuck payment
+router.post("/admin/verify/:reference", protect, adminOnly, async (req, res) => {
+  try {
+    paymentLog("info", "admin_verify_called", {
+      adminId: req.user?.id,
+      reference: req.params.reference,
+    });
+
+    const payment = await Payment.findOne({
+      where: { reference: req.params.reference },
+      include: [{ model: Course }],
+    });
+    if (!payment) {
+      return res.status(404).json({ error: "Payment not found" });
+    }
+    if (req.user.role !== "super-admin" && payment.Course?.createdBy !== req.user.id) {
+      return res.status(403).json({ error: "Not authorized to verify this payment" });
+    }
+
+    const result = await runPaymentVerification(payment, { actorId: req.user.id });
+    res.status(result.httpStatus).json(result.body);
+  } catch (err) {
+    paymentLog("error", "admin_verify_failed", {
+      adminId: req.user?.id,
+      reference: req.params.reference,
+      ...errorDetails(err),
+    });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/payments/admin/verify-bulk — re-verify a batch of stuck pending payments at once.
+// Capped per call so a single request can't run indefinitely on serverless; call again
+// (the response reports `remaining`) to keep working through a large backlog.
+const BULK_VERIFY_BATCH_LIMIT = 20;
+
+router.post("/admin/verify-bulk", protect, adminOnly, async (req, res) => {
+  try {
+    const { courseId } = req.body || {};
+    const scoped = req.user.role !== "super-admin";
+
+    const where = { status: "pending" };
+    if (scoped) {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      const ownCourseIds = courses.map((c) => c.id);
+      if (courseId && !ownCourseIds.includes(courseId)) {
+        return res.status(403).json({ error: "Not authorized to verify payments for this course" });
+      }
+      where.courseId = courseId || (ownCourseIds.length ? ownCourseIds : ["__none__"]);
+    } else if (courseId) {
+      where.courseId = courseId;
+    }
+
+    const totalPending = await Payment.count({ where });
+    const batch = await Payment.findAll({
+      where,
+      include: [{ model: Course }],
+      order: [["createdAt", "ASC"]],
+      limit: BULK_VERIFY_BATCH_LIMIT,
+    });
+
+    paymentLog("info", "bulk_verify_started", {
+      adminId: req.user.id,
+      courseId: courseId || null,
+      batchSize: batch.length,
+      totalPending,
+    });
+
+    const results = [];
+    for (const payment of batch) {
+      try {
+        const result = await runPaymentVerification(payment, { actorId: req.user.id });
+        results.push({
+          reference: payment.reference,
+          status: result.body.status,
+          courseTitle: payment.Course?.title,
+        });
+      } catch (err) {
+        results.push({
+          reference: payment.reference,
+          status: "error",
+          error: err.message,
+          courseTitle: payment.Course?.title,
+        });
+      }
+    }
+
+    const summary = results.reduce((acc, r) => {
+      acc[r.status] = (acc[r.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    paymentLog("info", "bulk_verify_completed", {
+      adminId: req.user.id,
+      processed: results.length,
+      remaining: Math.max(0, totalPending - results.length),
+      summary,
+    });
+
+    res.json({
+      processed: results.length,
+      remaining: Math.max(0, totalPending - results.length),
+      summary,
+      results,
+    });
+  } catch (err) {
+    paymentLog("error", "bulk_verify_failed", {
+      adminId: req.user?.id,
+      ...errorDetails(err),
+    });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/payments/admin/all — payment ledger with filters (status, courseId) + pagination
+router.get("/admin/all", protect, adminOnly, async (req, res) => {
+  try {
+    const { status, courseId, page = 1, limit = 20 } = req.query;
+    const scoped = req.user.role !== "super-admin";
+
+    const where = {};
+    if (status) where.status = status;
+    if (courseId) where.courseId = courseId;
+
+    if (scoped) {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      const ownCourseIds = courses.map((c) => c.id);
+      if (courseId && !ownCourseIds.includes(courseId)) {
+        return res.status(403).json({ error: "Not authorized to view payments for this course" });
+      }
+      if (!courseId) where.courseId = ownCourseIds.length ? ownCourseIds : ["__none__"];
+    }
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+
+    const { rows, count } = await Payment.findAndCountAll({
+      where,
+      include: [
+        { model: User, attributes: ["id", "name", "email"] },
+        { model: Course, attributes: ["id", "title"] },
+      ],
+      order: [["createdAt", "DESC"]],
+      limit: limitNum,
+      offset: (pageNum - 1) * limitNum,
+    });
+
+    res.json({
+      payments: rows.map((p) => ({
+        id: p.id,
+        reference: p.reference,
+        amount: p.amount,
+        currency: p.currency,
+        status: p.status,
+        channel: p.channel,
+        paidAt: p.paidAt,
+        createdAt: p.createdAt,
+        user: p.User,
+        course: p.Course,
+      })),
+      total: count,
+      page: pageNum,
+      limit: limitNum,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/payments/admin/revenue — total/current-month revenue + last-12-months series
+router.get("/admin/revenue", protect, adminOnly, async (req, res) => {
+  try {
+    const scoped = req.user.role !== "super-admin";
+    let courseIds = null;
+    if (scoped) {
+      const courses = await Course.findAll({
+        where: { createdBy: req.user.id },
+        attributes: ["id"],
+      });
+      courseIds = courses.map((c) => c.id);
+    }
+
+    const scopeWhere = scoped ? { courseId: courseIds.length ? courseIds : ["__none__"] } : {};
+    const successWhere = { ...scopeWhere, status: "success" };
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    const [totalRevenue, currentMonthRevenue, monthlyRows, statusRows] = await Promise.all([
+      Payment.sum("amount", { where: successWhere }),
+      Payment.sum("amount", {
+        where: { ...successWhere, paidAt: { [Op.gte]: startOfMonth } },
+      }),
+      Payment.findAll({
+        where: { ...successWhere, paidAt: { [Op.gte]: twelveMonthsAgo } },
+        attributes: [
+          [sequelize.fn("to_char", sequelize.col("paidAt"), "YYYY-MM"), "month"],
+          [sequelize.fn("SUM", sequelize.col("amount")), "revenue"],
+        ],
+        group: ["month"],
+        raw: true,
+      }),
+      Payment.findAll({
+        where: scopeWhere,
+        attributes: ["status", [sequelize.fn("COUNT", sequelize.col("id")), "count"]],
+        group: ["status"],
+        raw: true,
+      }),
+    ]);
+
+    const monthMap = new Map(monthlyRows.map((r) => [r.month, Number(r.revenue)]));
+    const monthly = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      monthly.push({
+        month: key,
+        label: d.toLocaleString("en-US", { month: "short", year: "numeric" }),
+        revenue: monthMap.get(key) || 0,
+      });
+    }
+
+    const statusBreakdown = { pending: 0, success: 0, failed: 0, abandoned: 0 };
+    statusRows.forEach((r) => {
+      statusBreakdown[r.status] = Number(r.count);
+    });
+
+    res.json({
+      totalRevenue: Number(totalRevenue) || 0,
+      currentMonthRevenue: Number(currentMonthRevenue) || 0,
+      monthly,
+      statusBreakdown,
+    });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

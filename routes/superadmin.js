@@ -7,6 +7,7 @@ import Lesson from "../models/Lesson.js";
 import Quiz from "../models/Quiz.js";
 import Enrollment from "../models/Enrollment.js";
 import LessonProgress from "../models/LessonProgress.js";
+import Payment from "../models/Payment.js";
 import {
   adminInviteEmailTemplate,
   appUrl,
@@ -289,7 +290,7 @@ router.get("/instructors/:id", protect, strictAdminOnly, async (req, res) => {
 // GET /api/superadmin/stats — platform-wide or instructor-specific stats
 router.get("/stats", protect, strictAdminOnly, async (req, res) => {
   try {
-    let totalUsers, totalAdmins, totalCourses, totalEnrollments, totalCompleted, totalLessons, totalQuizzes, activeUsers;
+    let totalUsers, totalAdmins, totalCourses, totalEnrollments, totalCompleted, totalLessons, totalQuizzes, activeUsers, totalRevenue;
     let recentActivity = [];
 
     if (req.user.role === "super-admin") {
@@ -301,6 +302,7 @@ router.get("/stats", protect, strictAdminOnly, async (req, res) => {
         totalCompleted,
         totalLessons,
         totalQuizzes,
+        totalRevenue,
       ] = await Promise.all([
         User.count({ where: { role: "user" } }),
         User.count({ where: { role: "admin" } }),
@@ -309,7 +311,9 @@ router.get("/stats", protect, strictAdminOnly, async (req, res) => {
         Enrollment.count({ where: { isCompleted: true } }),
         Lesson.count(),
         Quiz.count(),
+        Payment.sum("amount", { where: { status: "success" } }),
       ]);
+      totalRevenue = Number(totalRevenue) || 0;
       activeUsers = totalUsers;
 
       // Fetch platform-wide recent activity: recent enrollments
@@ -390,6 +394,9 @@ router.get("/stats", protect, strictAdminOnly, async (req, res) => {
           }),
         ]);
         activeUsers = totalUsers;
+        totalRevenue = Number(
+          await Payment.sum("amount", { where: { courseId: courseIds, status: "success" } }),
+        ) || 0;
 
         // Fetch instructor-specific recent activity: enrollments in their courses
         const recentEnrollments = await Enrollment.findAll({
@@ -427,6 +434,7 @@ router.get("/stats", protect, strictAdminOnly, async (req, res) => {
         totalQuizzes = 0;
         totalUsers = 0;
         activeUsers = 0;
+        totalRevenue = 0;
       }
     }
 
@@ -443,6 +451,7 @@ router.get("/stats", protect, strictAdminOnly, async (req, res) => {
       totalQuizzes,
       activeUsers,
       totalCompleted,
+      totalRevenue,
       completionRate:
         totalEnrollments > 0
           ? Math.round((totalCompleted / totalEnrollments) * 100)
