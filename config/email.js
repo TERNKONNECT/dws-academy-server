@@ -161,26 +161,22 @@ function emailLayout({
 </html>`;
 }
 
-export function verificationEmailTemplate({ name, link }) {
+export function verificationEmailTemplate({ name, otp }) {
   const safeName = escapeHtml(name);
-  const safeLink = escapeHtml(link);
+  const safeOtp = escapeHtml(otp);
 
   return emailLayout({
-    preview: "Verify your email address to activate your DWS Academy account.",
+    preview: "Use your DWS Academy code to verify your email address.",
     eyebrow: "Account verification",
     title: "Confirm your email address",
     body: `
       <p style="margin:0 0 16px;">Hello ${safeName},</p>
-      <p style="margin:0 0 16px;">Welcome to DWS Academy. Please verify your email address so we can activate your account and keep your learning profile secure.</p>
-      <p style="margin:0;">This verification link expires in 24 hours.</p>
+      <p style="margin:0 0 16px;">Welcome to DWS Academy. Enter the code below to verify your email address and activate your account.</p>
+      <p style="margin:0;">This code expires in 15 minutes.</p>
     `,
-    action: {
-      href: safeLink,
-      label: "Verify Email Address",
-    },
     secondary: `
-      <p style="margin:0 0 10px;font-size:13px;line-height:1.6;color:#71717a;">Button not working? Copy and paste this secure link into your browser:</p>
-      <p style="margin:0;word-break:break-all;font-size:13px;line-height:1.6;color:#3f3f46;">${safeLink}</p>
+      <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:0.08em;">Your verification code</p>
+      <p style="margin:0;font-size:34px;line-height:1.2;font-weight:800;letter-spacing:8px;color:#111111;">${safeOtp}</p>
     `,
     footerNote:
       "If you did not create a DWS Academy account, you can safely ignore this email.",
