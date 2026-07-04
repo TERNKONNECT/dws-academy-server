@@ -44,3 +44,4 @@ terraform.rc
 scripts/create-admin.js
 .gitignore
 scripts/create-super-admin.js
+.claude/
