@@ -220,6 +220,44 @@ async function ensureEnrollmentColumns() {
   }
 }
 
+async function ensureCertificateTable() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+  if (tables.includes("certificates")) return;
+  if (!tables.includes("users") || !tables.includes("courses")) {
+    console.log("users or courses table not found, skipping certificates table creation");
+    return;
+  }
+
+  await queryInterface.createTable("certificates", {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    certificateId: { type: DataTypes.STRING, allowNull: false, unique: true },
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: "users", key: "id" },
+      onDelete: "CASCADE",
+    },
+    courseId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: { model: "courses", key: "id" },
+      onDelete: "CASCADE",
+    },
+    studentName: { type: DataTypes.STRING, allowNull: false },
+    courseName: { type: DataTypes.STRING, allowNull: false },
+    instructorName: { type: DataTypes.STRING, allowNull: true },
+    issuedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  });
+  console.log("Created missing certificates table");
+}
+
 export async function connectDB() {
   if (isConnected) return;
   if (connectionPromise) return connectionPromise;
@@ -232,6 +270,7 @@ export async function connectDB() {
       await ensureQuizAttemptTable();
       await ensureEventTables();
       await ensureEnrollmentColumns();
+      await ensureCertificateTable();
       isConnected = true;
       console.log("PostgreSQL connected");
     } catch (err) {
