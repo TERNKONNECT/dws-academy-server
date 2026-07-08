@@ -85,7 +85,23 @@ router.get("/users", protect, strictAdminOnly, async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const mappedUsers = users.map((u) => ({ ...u.toJSON(), _id: u.id }));
+    const userIds = users.map((u) => u.id);
+    const enrollments = await Enrollment.findAll({
+      where: { userId: userIds },
+      attributes: ["userId", "courseId"],
+    });
+
+    const userEnrollments = {};
+    enrollments.forEach((e) => {
+      if (!userEnrollments[e.userId]) userEnrollments[e.userId] = [];
+      userEnrollments[e.userId].push(e.courseId);
+    });
+
+    const mappedUsers = users.map((u) => ({
+      ...u.toJSON(),
+      _id: u.id,
+      enrolledCourses: userEnrollments[u.id] || [],
+    }));
     res.json(mappedUsers);
   } catch (err) {
     res.status(500).json({ error: err.message });
