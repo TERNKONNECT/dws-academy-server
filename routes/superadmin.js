@@ -65,6 +65,58 @@ async function getGrowthData(Model, extraWhere = {}) {
   };
 }
 
+// GET /api/superadmin/users — all users (learners)
+router.get("/users", protect, strictAdminOnly, async (req, res) => {
+  try {
+    const { search } = req.query;
+    let whereClause = { role: "user" };
+    if (search) {
+      whereClause = {
+        ...whereClause,
+        [Op.or]: [
+          { name: { [Op.iLike]: `%${search}%` } },
+          { email: { [Op.iLike]: `%${search}%` } },
+        ],
+      };
+    }
+    const users = await User.findAll({
+      where: whereClause,
+      attributes: ["id", "name", "email", "role", "isBlocked", "createdAt", "updatedAt", "avatar"],
+      order: [["createdAt", "DESC"]],
+    });
+
+    const mappedUsers = users.map((u) => ({ ...u.toJSON(), _id: u.id }));
+    res.json(mappedUsers);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/superadmin/users/:id/toggle-block
+router.put("/users/:id/toggle-block", protect, strictAdminOnly, async (req, res) => {
+  try {
+    const user = await User.findOne({ where: { id: req.params.id } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    user.isBlocked = !user.isBlocked;
+    await user.save();
+    res.json({ ...user.toJSON(), _id: user.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/superadmin/users/:id
+router.delete("/users/:id", protect, strictAdminOnly, async (req, res) => {
+  try {
+    const user = await User.findOne({ where: { id: req.params.id } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    await user.destroy();
+    res.json({ message: "User deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/superadmin/instructors — all admins with their course counts
 router.get("/instructors", protect, strictAdminOnly, async (req, res) => {
   try {
