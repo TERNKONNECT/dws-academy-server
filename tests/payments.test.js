@@ -241,7 +241,7 @@ describe("Payments: student self-verify", () => {
     assert.equal(updated.status, "pending", "status should not have been upgraded to success");
   });
 
-  it("404s when the payment reference does not belong to the requesting user", async () => {
+  it("403s when the payment reference does not belong to the requesting user", async () => {
     const owner = await createUser();
     const outsider = await createUser();
     const course = await createCourse({ pricingType: "paid", price: 5000 });
@@ -251,7 +251,8 @@ describe("Payments: student self-verify", () => {
       .get(`/api/payments/verify/${payment.reference}`)
       .set("Authorization", `Bearer ${signTokenFor(outsider)}`);
 
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 403);
+    assert.match(res.body.error, /belongs to a different user/i);
   });
 });
 
