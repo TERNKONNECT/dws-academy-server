@@ -475,7 +475,7 @@ router.get("/verify/:reference", protect, async (req, res) => {
     });
 
     const payment = await Payment.findOne({
-      where: { reference: req.params.reference, userId: req.user.id },
+      where: { reference: req.params.reference },
       include: [{ model: Course }],
     });
     if (!payment) {
@@ -484,6 +484,15 @@ router.get("/verify/:reference", protect, async (req, res) => {
         reference: req.params.reference,
       });
       return res.status(404).json({ error: "Payment not found" });
+    }
+    
+    if (payment.userId !== req.user.id) {
+      paymentLog("warn", "verify_rejected_user_mismatch", {
+        requestUserId: req.user.id,
+        paymentUserId: payment.userId,
+        reference: req.params.reference,
+      });
+      return res.status(403).json({ error: "Payment belongs to a different user" });
     }
 
     const result = await runPaymentVerification(payment, { actorId: req.user.id });

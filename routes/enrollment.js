@@ -55,12 +55,13 @@ router.get("/my", protect, async (req, res) => {
             { model: Module, where: { courseId: e.courseId }, required: true },
           ],
         });
-        const completedLessons = await LessonProgress.count({
+        const completedProgress = await LessonProgress.findAll({
           where: { enrollmentId: e.id },
         });
+        const completedLessonsCount = completedProgress.length;
         const progressPct =
           totalLessons > 0
-            ? Math.round((completedLessons / totalLessons) * 100)
+            ? Math.round((completedLessonsCount / totalLessons) * 100)
             : 0;
 
         return {
@@ -70,7 +71,8 @@ router.get("/my", protect, async (req, res) => {
           completedAt: e.completedAt,
           course: e.Course,
           totalLessons,
-          completedLessons,
+          completedLessons: completedLessonsCount,
+          completedLessonIds: completedProgress.map((p) => p.lessonId),
           progressPct,
         };
       }),
