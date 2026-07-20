@@ -6,7 +6,10 @@ export function protect(req, res, next) {
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
-  } catch {
+  } catch (err) {
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Session expired. Please log in again." });
+    }
     res.status(401).json({ error: "Invalid token" });
   }
 }
