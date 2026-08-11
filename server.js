@@ -18,9 +18,11 @@ import reviewRoutes from "./routes/reviews.js";
 import paymentRoutes from "./routes/payments.js";
 import eventsRoutes from "./routes/events.js";
 import certificateRoutes from "./routes/certificates.js";
+import testimonialRoutes from "./routes/testimonials.js";
 import "./models/Payment.js";
 import "./models/QuizAttempt.js";
 import "./models/Certificate.js";
+import "./models/Testimonial.js";
 
 setupCourseAssociations(User);
 setupEventAssociations(EventImage);
@@ -75,6 +77,7 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/events", eventsRoutes);
 app.use("/api/certificates", certificateRoutes);
+app.use("/api/testimonials", testimonialRoutes);
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get("/", (req, res) => res.send("API is running"));
