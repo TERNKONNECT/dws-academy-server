@@ -1,0 +1,102 @@
+import express from "express";
+import { protect, adminOnly } from "../middleware/auth.js";
+import Faculty from "../models/Faculty.js";
+
+const router = express.Router();
+
+// GET /api/faculty — public endpoint to fetch active faculty (limited to 4)
+router.get("/", async (req, res) => {
+  try {
+    const faculties = await Faculty.findAll({
+      where: { isActive: true },
+      order: [["createdAt", "DESC"]],
+      limit: 4,
+    });
+    res.json(faculties);
+  } catch (error) {
+    console.error("Error fetching faculty:", error);
+    res.status(500).json({ error: "Server error fetching faculty" });
+  }
+});
+
+// GET /api/faculty/admin — admin endpoint to fetch all faculty
+router.get("/admin", protect, adminOnly, async (req, res) => {
+  try {
+    const faculties = await Faculty.findAll({
+      order: [["createdAt", "DESC"]],
+    });
+    res.json(faculties);
+  } catch (error) {
+    console.error("Error fetching faculty for admin:", error);
+    res.status(500).json({ error: "Server error fetching faculty" });
+  }
+});
+
+// POST /api/faculty/admin — create a faculty member
+router.post("/admin", protect, adminOnly, async (req, res) => {
+  try {
+    const { name, jobTitle, company, shortDescription, avatar, isActive } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: "Name is required." });
+    }
+    
+    const faculty = await Faculty.create({
+      name,
+      jobTitle: jobTitle || "",
+      company: company || "",
+      shortDescription: shortDescription || "",
+      avatar: avatar || "",
+      isActive: isActive !== undefined ? isActive : true,
+    });
+    
+    res.status(201).json(faculty);
+  } catch (error) {
+    console.error("Error creating faculty:", error);
+    res.status(500).json({ error: "Server error creating faculty" });
+  }
+});
+
+// PUT /api/faculty/admin/:id — update a faculty member
+router.put("/admin/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const faculty = await Faculty.findByPk(req.params.id);
+    if (!faculty) {
+      return res.status(404).json({ error: "Faculty not found" });
+    }
+    
+    const { name, jobTitle, company, shortDescription, avatar, isActive } = req.body;
+    
+    await faculty.update({
+      name: name !== undefined ? name : faculty.name,
+      jobTitle: jobTitle !== undefined ? jobTitle : faculty.jobTitle,
+      company: company !== undefined ? company : faculty.company,
+      shortDescription: shortDescription !== undefined ? shortDescription : faculty.shortDescription,
+      avatar: avatar !== undefined ? avatar : faculty.avatar,
+      isActive: isActive !== undefined ? isActive : faculty.isActive,
+    });
+    
+    res.json(faculty);
+  } catch (error) {
+    console.error("Error updating faculty:", error);
+    res.status(500).json({ error: "Server error updating faculty" });
+  }
+});
+
+// DELETE /api/faculty/admin/:id — delete a faculty member
+router.delete("/admin/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const faculty = await Faculty.findByPk(req.params.id);
+    if (!faculty) {
+      return res.status(404).json({ error: "Faculty not found" });
+    }
+    
+    await faculty.destroy();
+    res.json({ message: "Faculty removed successfully" });
+  } catch (error) {
+    console.error("Error deleting faculty:", error);
+    res.status(500).json({ error: "Server error deleting faculty" });
+  }
+});
+
+export default router;

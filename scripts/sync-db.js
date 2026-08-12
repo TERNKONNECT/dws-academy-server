@@ -12,6 +12,7 @@ import "../models/LessonProgress.js";
 import "../models/Review.js";
 import "../models/Video.js";
 import "../models/Testimonial.js";
+import "../models/Faculty.js";
 
 // Make sure associations are set up before syncing
 setupCourseAssociations(User);
