@@ -1,6 +1,10 @@
 import express from "express";
 import { protect, adminOnly } from "../middleware/auth.js";
 import Faculty from "../models/Faculty.js";
+import multer from "multer";
+import { uploadFile, deleteFile } from "../utils/cloudinary.js";
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
 
@@ -96,6 +100,34 @@ router.delete("/admin/:id", protect, adminOnly, async (req, res) => {
   } catch (error) {
     console.error("Error deleting faculty:", error);
     res.status(500).json({ error: "Server error deleting faculty" });
+  }
+});
+
+// POST /api/faculty/admin/:id/avatar — upload faculty avatar
+router.post("/admin/:id/avatar", protect, adminOnly, upload.single("avatar"), async (req, res) => {
+  try {
+    const faculty = await Faculty.findByPk(req.params.id);
+    if (!faculty) {
+      return res.status(404).json({ error: "Faculty not found" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No image uploaded" });
+    }
+
+    const fileData = await uploadFile(req.file, "lms/faculty");
+    
+    // Optional: Delete old avatar from Cloudinary if it exists and is a Cloudinary URL
+    // (Skipping for now to keep it simple, but good practice)
+
+    await faculty.update({
+      avatar: fileData.secure_url,
+    });
+
+    res.json(faculty);
+  } catch (error) {
+    console.error("Error uploading avatar:", error);
+    res.status(500).json({ error: "Server error uploading avatar" });
   }
 });
 
