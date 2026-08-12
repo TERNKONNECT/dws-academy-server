@@ -66,7 +66,7 @@ describe("Enrollment: admin enrolls a student by email", () => {
   it("enrolls an already-registered user by email", async () => {
     const admin = await createUser({ role: "admin", emailVerified: true });
     const student = await createUser({ email: "student-for-admin@example.com" });
-    const course = await createCourse({ pricingType: "free" });
+    const course = await createCourse({ pricingType: "free", createdBy: admin.id });
     const token = signTokenFor(admin);
 
     const res = await request(app)
@@ -80,7 +80,7 @@ describe("Enrollment: admin enrolls a student by email", () => {
 
   it("rejects enrolling an email that has no account on the platform", async () => {
     const admin = await createUser({ role: "admin", emailVerified: true });
-    const course = await createCourse({ pricingType: "free" });
+    const course = await createCourse({ pricingType: "free", createdBy: admin.id });
     const token = signTokenFor(admin);
 
     const res = await request(app)

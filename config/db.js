@@ -37,6 +37,7 @@ async function ensureUserInviteColumns() {
         { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       ],
       ["isBlocked", { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }],
+      ["otpAttempts", { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }],
     ];
 
     for (const [columnName, definition] of columns) {

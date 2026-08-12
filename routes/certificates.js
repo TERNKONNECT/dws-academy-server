@@ -15,7 +15,7 @@ function generateCertificateId() {
 // POST /api/certificates/issue — issue (or return the existing) certificate for a
 // course the caller has completed. Idempotent: safe to call every time the
 // certificate page loads.
-router.post("/issue", protect, async (req, res) => {
+router.post("/issue", protect, async (req, res, next) => {
   try {
     const { courseId } = req.body;
     if (!courseId) return res.status(400).json({ error: "courseId is required" });
@@ -54,12 +54,12 @@ router.post("/issue", protect, async (req, res) => {
 
     res.status(201).json(certificate);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/certificates/mine/:courseId — fetch the caller's own certificate for a course, if issued
-router.get("/mine/:courseId", protect, async (req, res) => {
+router.get("/mine/:courseId", protect, async (req, res, next) => {
   try {
     const certificate = await Certificate.findOne({
       where: { userId: req.user.id, courseId: req.params.courseId },
@@ -67,13 +67,13 @@ router.get("/mine/:courseId", protect, async (req, res) => {
     if (!certificate) return res.status(404).json({ error: "Certificate not found" });
     res.json(certificate);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/certificates/verify/:certificateId — PUBLIC, no auth. Lets anyone (e.g. an
 // employer) confirm a certificate is genuine from the code printed on it.
-router.get("/verify/:certificateId", async (req, res) => {
+router.get("/verify/:certificateId", async (req, res, next) => {
   try {
     const certificate = await Certificate.findOne({
       where: { certificateId: req.params.certificateId.toUpperCase() },
@@ -90,7 +90,7 @@ router.get("/verify/:certificateId", async (req, res) => {
       issuedAt: certificate.issuedAt,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

@@ -8,7 +8,7 @@ import { protect, adminOnly } from "../middleware/auth.js";
 const router = express.Router();
 
 // POST /api/reviews/:courseId — submit a review (only completed students)
-router.post("/:courseId", protect, async (req, res) => {
+router.post("/:courseId", protect, async (req, res, next) => {
   try {
     const { rating, comment } = req.body;
     if (!rating || rating < 1 || rating > 5)
@@ -43,12 +43,12 @@ router.post("/:courseId", protect, async (req, res) => {
 
     res.status(created ? 201 : 200).json(review);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/reviews/:courseId — get all reviews for a course (public)
-router.get("/:courseId", async (req, res) => {
+router.get("/:courseId", async (req, res, next) => {
   try {
     const reviews = await Review.findAll({
       where: { courseId: req.params.courseId },
@@ -65,12 +65,12 @@ router.get("/:courseId", async (req, res) => {
 
     res.json({ avgRating, totalReviews: reviews.length, reviews });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/reviews/:courseId/admin — admin sees reviews for their course
-router.get("/:courseId/admin", protect, adminOnly, async (req, res) => {
+router.get("/:courseId/admin", protect, adminOnly, async (req, res, next) => {
   try {
     const course = await Course.findByPk(req.params.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
@@ -93,7 +93,7 @@ router.get("/:courseId/admin", protect, adminOnly, async (req, res) => {
 
     res.json({ avgRating, totalReviews: reviews.length, reviews });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

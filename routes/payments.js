@@ -7,6 +7,7 @@ import Enrollment from "../models/Enrollment.js";
 import Payment from "../models/Payment.js";
 import User from "../models/User.js";
 import { protect, adminOnly } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import {
   initializePaystackTransaction,
   verifyPaystackTransaction,
@@ -18,8 +19,22 @@ import {
 
 const router = express.Router();
 
+// Starting a transaction hits Paystack, so it is worth a modest cap per user.
+const paymentLimiter = rateLimit({
+  name: "payment-initialize",
+  windowMs: 10 * 60 * 1000,
+  limit: 20,
+  message: "Too many payment attempts. Wait a few minutes and try again.",
+});
+
 const finalFailureStatuses = new Set(["abandoned", "failed", "reversed"]);
-const toKobo = (amount) => Math.round(Number(amount || 0) * 100);
+
+// `Payment.amount` is an INTEGER column of whole naira, so the value we charge and
+// the value we store have to be the same whole number — otherwise Postgres rounds on
+// write and verification later compares against a figure Paystack was never asked
+// for, and the payment can never be confirmed. Everything funnels through here.
+const toWholeNaira = (amount) => Math.round(Number(amount || 0));
+const toKobo = (amount) => toWholeNaira(amount) * 100;
 const frontendUrl = (path) =>
   `${(process.env.FRONTEND_URL || "http://localhost:8080").replace(/\/$/, "")}${path}`;
 
@@ -222,13 +237,7 @@ async function confirmAndGrantCourseAccess(payment, paystackData = {}) {
   }
 }
 
-router.get("/config", (req, res) => {
-  res.json({
-    serviceFeePercentage: Number(process.env.SERVICE_FEE_PERCENTAGE || 0)
-  });
-});
-
-router.post("/initialize", protect, async (req, res) => {
+router.post("/initialize", protect, paymentLimiter, async (req, res, next) => {
   try {
     const { courseId } = req.body;
     paymentLog("info", "initialize_called", {
@@ -308,23 +317,17 @@ router.post("/initialize", protect, async (req, res) => {
     const reference = makeReference(course.id, user.id);
     const callbackUrl = frontendUrl(`/payment/success?reference=${reference}`);
     const failedUrl = frontendUrl(`/payment/failed?reference=${reference}&courseId=${course.id}`);
-    
-    const serviceFeePercentage = Number(process.env.SERVICE_FEE_PERCENTAGE || 0);
-    const courseFee = Number(course.price);
-    const expectedServiceFee = courseFee * (serviceFeePercentage / 100);
-    const expectedTotalAmount = courseFee + expectedServiceFee;
-    
-    const finalTotalAmount = expectedTotalAmount;
-    
-    const amountKobo = toKobo(finalTotalAmount);
+
+    // The student pays the course price and nothing else. The price always comes
+    // from the database — the `totalAmount` the client may send is ignored.
+    const chargeAmount = toWholeNaira(course.price);
+    const amountKobo = toKobo(chargeAmount);
 
     paymentLog("info", "paystack_initialize_requested", {
       userId: user.id,
       courseId: course.id,
       reference,
-      amount: finalTotalAmount,
-      courseFee: courseFee,
-      serviceFee: expectedServiceFee,
+      amount: chargeAmount,
       amountKobo,
       currency: course.currency || "NGN",
     });
@@ -341,7 +344,9 @@ router.post("/initialize", protect, async (req, res) => {
         courseTitle: course.title,
         failedUrl,
       },
-      ...(process.env.PAYSTACK_SUBACCOUNT ? { subaccount: process.env.PAYSTACK_SUBACCOUNT } : {})
+      ...(process.env.PAYSTACK_SUBACCOUNT
+        ? { subaccount: process.env.PAYSTACK_SUBACCOUNT }
+        : {}),
     });
 
     paymentLog("info", "paystack_initialize_succeeded", {
@@ -358,7 +363,7 @@ router.post("/initialize", protect, async (req, res) => {
       reference,
       accessCode: initialized.access_code || "",
       authorizationUrl: initialized.authorization_url || "",
-      amount: finalTotalAmount,
+      amount: chargeAmount,
       currency: course.currency || "NGN",
       status: "pending",
       metadata: initialized,
@@ -387,7 +392,7 @@ router.post("/initialize", protect, async (req, res) => {
       courseId: req.body?.courseId,
       ...errorDetails(err),
     });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -466,7 +471,7 @@ async function runPaymentVerification(payment, { actorId } = {}) {
   };
 }
 
-router.get("/verify/:reference", protect, async (req, res) => {
+router.get("/verify/:reference", protect, async (req, res, next) => {
   try {
     paymentLog("info", "verify_called", {
       userId: req.user?.id,
@@ -503,7 +508,7 @@ router.get("/verify/:reference", protect, async (req, res) => {
       reference: req.params.reference,
       ...errorDetails(err),
     });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -512,7 +517,7 @@ router.get("/verify/:reference", protect, async (req, res) => {
 
 // GET /api/payments/admin/courses/:courseId/pending — payments stuck pending for a course
 // (i.e. Paystack was never confirmed — usually a missed/failed webhook)
-router.get("/admin/courses/:courseId/pending", protect, adminOnly, async (req, res) => {
+router.get("/admin/courses/:courseId/pending", protect, adminOnly, async (req, res, next) => {
   try {
     const course = await Course.findByPk(req.params.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
@@ -537,12 +542,12 @@ router.get("/admin/courses/:courseId/pending", protect, adminOnly, async (req, r
       })),
     );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // POST /api/payments/admin/verify/:reference — admin re-verifies any user's stuck payment
-router.post("/admin/verify/:reference", protect, adminOnly, async (req, res) => {
+router.post("/admin/verify/:reference", protect, adminOnly, async (req, res, next) => {
   try {
     paymentLog("info", "admin_verify_called", {
       adminId: req.user?.id,
@@ -568,7 +573,7 @@ router.post("/admin/verify/:reference", protect, adminOnly, async (req, res) => 
       reference: req.params.reference,
       ...errorDetails(err),
     });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -577,7 +582,7 @@ router.post("/admin/verify/:reference", protect, adminOnly, async (req, res) => 
 // (the response reports `remaining`) to keep working through a large backlog.
 const BULK_VERIFY_BATCH_LIMIT = 20;
 
-router.post("/admin/verify-bulk", protect, adminOnly, async (req, res) => {
+router.post("/admin/verify-bulk", protect, adminOnly, async (req, res, next) => {
   try {
     const { courseId } = req.body || {};
     const scoped = req.user.role !== "super-admin";
@@ -654,12 +659,12 @@ router.post("/admin/verify-bulk", protect, adminOnly, async (req, res) => {
       adminId: req.user?.id,
       ...errorDetails(err),
     });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/payments/admin/all — payment ledger with filters (status, courseId) + pagination
-router.get("/admin/all", protect, adminOnly, async (req, res) => {
+router.get("/admin/all", protect, adminOnly, async (req, res, next) => {
   try {
     const { status, courseId, page = 1, limit = 20 } = req.query;
     const scoped = req.user.role !== "super-admin";
@@ -712,12 +717,12 @@ router.get("/admin/all", protect, adminOnly, async (req, res) => {
       limit: limitNum,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/payments/admin/revenue — total/current-month revenue + last-12-months series
-router.get("/admin/revenue", protect, adminOnly, async (req, res) => {
+router.get("/admin/revenue", protect, adminOnly, async (req, res, next) => {
   try {
     const scoped = req.user.role !== "super-admin";
     let courseIds = null;
@@ -782,11 +787,11 @@ router.get("/admin/revenue", protect, adminOnly, async (req, res) => {
       statusBreakdown,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-router.post("/webhook", async (req, res) => {
+router.post("/webhook", async (req, res, next) => {
   try {
     paymentLog("info", "webhook_received", {
       event: req.body?.event,
@@ -869,7 +874,7 @@ router.post("/webhook", async (req, res) => {
       reference: req.body?.data?.reference,
       ...errorDetails(err),
     });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

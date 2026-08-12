@@ -1,13 +1,16 @@
 import express from "express";
-import multer from "multer";
 import Course from "../models/Course.js";
-import Enrollment from "../models/Enrollment.js";
 import Module from "../models/Module.js";
 import Lesson from "../models/Lesson.js";
 import Quiz from "../models/Quiz.js";
 import User from "../models/User.js";
-import jwt from "jsonwebtoken";
-import { protect, adminOnly } from "../middleware/auth.js";
+import { protect, adminOnly, optionalAuth } from "../middleware/auth.js";
+import {
+  canAccessCourseContent,
+  courseOwnershipGate,
+} from "../middleware/courseAccess.js";
+import { imageUpload, videoUpload } from "../middleware/uploads.js";
+import { publicQuizOutline } from "../services/quizSerializer.js";
 import {
   createUploadUrl,
   uploadFile,
@@ -16,7 +19,32 @@ import {
 } from "../config/storage.js";
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const requireCourseOwnership = courseOwnershipGate("id");
+
+// Roles allowed to see unpublished drafts in listings.
+const DRAFT_VIEWER_ROLES = new Set(["admin", "super-admin", "operator"]);
+
+// Fields a course write is allowed to touch. Anything else in the body — `id`,
+// `createdBy`, timestamps — is ignored rather than spread into the model.
+const WRITABLE_COURSE_FIELDS = [
+  "title",
+  "description",
+  "difficulty",
+  "status",
+  "whatYouLearn",
+  "introVideoUrl",
+  "introVideoCloudinaryId",
+  "thumbnail",
+  "thumbnailCloudinaryId",
+];
+
+function pickCourseFields(body) {
+  const out = {};
+  for (const field of WRITABLE_COURSE_FIELDS) {
+    if (body[field] !== undefined) out[field] = body[field];
+  }
+  return out;
+}
 
 async function serializeCourse(course) {
   const data = course.toJSON ? course.toJSON() : course;
@@ -56,55 +84,18 @@ function publicLessonOutline(lesson) {
   };
 }
 
-function getAuthUser(req) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  try {
-    return jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
-  } catch {
-    return null;
-  }
-}
-
-async function hasCourseAccess(req, course) {
-  const authUser = getAuthUser(req);
-  // 1️⃣ No auth – never grant full access (preview only for any course)
-  if (!authUser) return false;
-
-  // 2️⃣ Privileged roles – super‑admin, admin, instructor, staff can see everything
-  const privilegedRoles = ["super-admin", "admin", "instructor", "staff"];
-  if (privilegedRoles.includes(authUser.role)) return true;
-
-  // 3️⃣ Regular users – require enrollment regardless of free/paid status
-  const enrollment = await Enrollment.findOne({
-    where: { userId: authUser.id, courseId: course.id },
-  });
-  return Boolean(enrollment);
-}
-
 // GET all courses
-router.get("/", async (req, res) => {
+router.get("/", optionalAuth, async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    let where = {};
-    let isSuperAdmin = false;
+    // Default to published for everyone. Only roles that are explicitly allowed to
+    // see drafts get a wider filter — an unrecognised future role fails closed.
+    let where = { status: "published" };
+    const isSuperAdmin = req.user?.role === "super-admin";
 
-    if (authHeader) {
-      try {
-        const decoded = jwt.verify(
-          authHeader.split(" ")[1],
-          process.env.JWT_SECRET,
-        );
-        if (decoded.role === "admin") {
-          where = { createdBy: decoded.id };
-        } else if (decoded.role === "super-admin") {
-          isSuperAdmin = true;
-        }
-      } catch {
-        where = { status: "published" };
-      }
-    } else {
-      where = { status: "published" };
+    if (req.user?.role === "admin") {
+      where = { createdBy: req.user.id };
+    } else if (isSuperAdmin || req.user?.role === "operator") {
+      where = {};
     }
 
     const courses = await Course.findAll({
@@ -126,16 +117,24 @@ router.get("/", async (req, res) => {
     res.set("Cache-Control", "private, max-age=60");
     res.json(await Promise.all(courses.map(serializeCourse)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET single course with full structure
-router.get("/:id", async (req, res) => {
+router.get("/:id", optionalAuth, async (req, res, next) => {
   try {
     const course = await Course.findByPk(req.params.id);
     if (!course) return res.status(404).json({ error: "Course not found" });
-    const canAccessContent = await hasCourseAccess(req, course);
+
+    // Drafts are only visible to staff and the instructor who owns them.
+    const canSeeDraft =
+      DRAFT_VIEWER_ROLES.has(req.user?.role) || course.createdBy === req.user?.id;
+    if (course.status !== "published" && !canSeeDraft) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    const canAccessContent = await canAccessCourseContent(req, course);
 
     const modules = await Module.findAll({
       where: { courseId: req.params.id },
@@ -156,7 +155,9 @@ router.get("/:id", async (req, res) => {
           lessons: canAccessContent
             ? await Promise.all(lessons.map(serializeLesson))
             : lessons.map(publicLessonOutline),
-          quiz: canAccessContent ? quiz : quiz ? { id: quiz.id, moduleId: quiz.moduleId, title: quiz.title } : null,
+          // Never ship the answer key. Even enrolled students get the questions
+          // without `correctIndex` — grading happens server-side.
+          quiz: publicQuizOutline(quiz, { includeQuestions: canAccessContent }),
         };
       }),
     );
@@ -167,16 +168,17 @@ router.get("/:id", async (req, res) => {
       modules: modulesWithContent,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // POST create course
-router.post("/", protect, adminOnly, async (req, res) => {
+router.post("/", protect, adminOnly, async (req, res, next) => {
   try {
     const { title, description, difficulty, status } = req.body;
     const pricingType = req.body.pricingType === "paid" ? "paid" : "free";
-    const price = pricingType === "paid" ? Number(req.body.price || 0) : 0;
+    const price =
+      pricingType === "paid" ? Math.round(Number(req.body.price || 0)) : 0;
 
     if (!title) return res.status(400).json({ error: "Title is required" });
     if (pricingType === "paid" && price <= 0) {
@@ -195,49 +197,42 @@ router.post("/", protect, adminOnly, async (req, res) => {
     });
     res.status(201).json(course);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // POST upload intro video
-router.post("/:id/intro-video-upload-url", protect, adminOnly, async (req, res) => {
-  try {
-    const course = await Course.findByPk(req.params.id);
-    if (!course) return res.status(404).json({ error: "Course not found" });
-    if (req.user.role === "admin" && course.createdBy !== req.user.id)
-      return res
-        .status(403)
-        .json({ error: "Not authorized to update this course" });
+router.post(
+  "/:id/intro-video-upload-url",
+  protect,
+  requireCourseOwnership,
+  async (req, res, next) => {
+    try {
+      const { filename, contentType } = req.body;
+      if (!filename)
+        return res.status(400).json({ error: "Filename is required" });
 
-    const { filename, contentType } = req.body;
-    if (!filename)
-      return res.status(400).json({ error: "Filename is required" });
+      const upload = await createUploadUrl({
+        filename,
+        contentType,
+        folder: "lms/intro-videos",
+      });
 
-    const upload = await createUploadUrl({
-      filename,
-      contentType,
-      folder: "lms/intro-videos",
-    });
-
-    res.json(upload);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+      res.json(upload);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.post(
   "/:id/intro-video",
   protect,
-  adminOnly,
-  upload.single("video"),
-  async (req, res) => {
+  requireCourseOwnership,
+  videoUpload.single("video"),
+  async (req, res, next) => {
     try {
-      const course = await Course.findByPk(req.params.id);
-      if (!course) return res.status(404).json({ error: "Course not found" });
-      if (req.user.role === "admin" && course.createdBy !== req.user.id)
-        return res
-          .status(403)
-          .json({ error: "Not authorized to update this course" });
+      const course = req.course;
       if (!req.file)
         return res.status(400).json({ error: "No video file uploaded" });
 
@@ -252,26 +247,21 @@ router.post(
       });
       res.json(course);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
 
-// Add this after the intro-video route, before PUT
 // POST /api/courses/:id/thumbnail — upload course thumbnail
 router.post(
   "/:id/thumbnail",
   protect,
-  adminOnly,
-  upload.single("thumbnail"),
-  async (req, res) => {
+  requireCourseOwnership,
+  imageUpload.single("thumbnail"),
+  async (req, res, next) => {
     try {
-      const course = await Course.findByPk(req.params.id);
-      if (!course) return res.status(404).json({ error: "Course not found" });
-      if (req.user.role === "admin" && course.createdBy !== req.user.id)
-        return res.status(403).json({ error: "Not authorized" });
-      if (!req.file)
-        return res.status(400).json({ error: "No image uploaded" });
+      const course = req.course;
+      if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
       if (course.thumbnailCloudinaryId) {
         await deleteFile(course.thumbnailCloudinaryId, "image");
@@ -284,20 +274,15 @@ router.post(
       });
       res.json(course);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
 
 // PUT update course
-router.put("/:id", protect, adminOnly, async (req, res) => {
+router.put("/:id", protect, requireCourseOwnership, async (req, res, next) => {
   try {
-    const course = await Course.findByPk(req.params.id);
-    if (!course) return res.status(404).json({ error: "Course not found" });
-    if (req.user.role === "admin" && course.createdBy !== req.user.id)
-      return res
-        .status(403)
-        .json({ error: "Not authorized to update this course" });
+    const course = req.course;
 
     const nextPricingType =
       req.body.pricingType === undefined
@@ -307,7 +292,7 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
           : "free";
     const nextPrice =
       nextPricingType === "paid"
-        ? Number(req.body.price ?? course.price ?? 0)
+        ? Math.round(Number(req.body.price ?? course.price ?? 0))
         : 0;
 
     if (nextPricingType === "paid" && nextPrice <= 0) {
@@ -315,26 +300,21 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
     }
 
     await course.update({
-      ...req.body,
+      ...pickCourseFields(req.body),
       pricingType: nextPricingType,
       price: nextPrice,
       currency: req.body.currency || course.currency || "NGN",
     });
     res.json(course);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // DELETE course
-router.delete("/:id", protect, adminOnly, async (req, res) => {
+router.delete("/:id", protect, requireCourseOwnership, async (req, res, next) => {
   try {
-    const course = await Course.findByPk(req.params.id);
-    if (!course) return res.status(404).json({ error: "Course not found" });
-    if (req.user.role === "admin" && course.createdBy !== req.user.id)
-      return res
-        .status(403)
-        .json({ error: "Not authorized to delete this course" });
+    const course = req.course;
     if (course.introVideoCloudinaryId) {
       await deleteFile(course.introVideoCloudinaryId, "video");
     }
@@ -344,42 +324,44 @@ router.delete("/:id", protect, adminOnly, async (req, res) => {
     await course.destroy();
     res.json({ message: "Course deleted" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// POST save intro video URL (after direct Cloudinary upload)
-router.post("/:id/intro-video-url", protect, adminOnly, async (req, res) => {
-  try {
-    const course = await Course.findByPk(req.params.id);
-    if (!course) return res.status(404).json({ error: "Course not found" });
-    if (req.user.role === "admin" && course.createdBy !== req.user.id)
-      return res.status(403).json({ error: "Not authorized" });
-    await course.update({
-      introVideoUrl: req.body.introVideoUrl,
-      introVideoCloudinaryId: req.body.introVideoCloudinaryId,
-    });
-    res.json(course);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// POST save intro video URL (after direct upload)
+router.post(
+  "/:id/intro-video-url",
+  protect,
+  requireCourseOwnership,
+  async (req, res, next) => {
+    try {
+      await req.course.update({
+        introVideoUrl: req.body.introVideoUrl,
+        introVideoCloudinaryId: req.body.introVideoCloudinaryId,
+      });
+      res.json(req.course);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
-// POST save thumbnail URL (after direct Cloudinary upload)
-router.post("/:id/thumbnail-url", protect, adminOnly, async (req, res) => {
-  try {
-    const course = await Course.findByPk(req.params.id);
-    if (!course) return res.status(404).json({ error: "Course not found" });
-    if (req.user.role === "admin" && course.createdBy !== req.user.id)
-      return res.status(403).json({ error: "Not authorized" });
-    await course.update({
-      thumbnail: req.body.thumbnail,
-      thumbnailCloudinaryId: req.body.thumbnailCloudinaryId,
-    });
-    res.json(course);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// POST save thumbnail URL (after direct upload)
+router.post(
+  "/:id/thumbnail-url",
+  protect,
+  requireCourseOwnership,
+  async (req, res, next) => {
+    try {
+      await req.course.update({
+        thumbnail: req.body.thumbnail,
+        thumbnailCloudinaryId: req.body.thumbnailCloudinaryId,
+      });
+      res.json(req.course);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

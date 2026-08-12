@@ -75,13 +75,13 @@ describe("Payments: initialize a paid-course checkout", () => {
       .send({ courseId: course.id });
 
     assert.equal(res.status, 201);
-    assert.equal(res.body.amount, 10500); // 10000 + 5% service fee
+    assert.equal(res.body.amount, 10000); // the course price, nothing added
     assert.equal(res.body.authorizationUrl, "https://checkout.paystack.com/abc123");
 
     const payment = await Payment.findOne({ where: { reference: res.body.reference } });
     assert.ok(payment, "a payment row should have been created");
     assert.equal(payment.status, "pending");
-    assert.equal(Number(payment.amount), 10500);
+    assert.equal(Number(payment.amount), 10000);
   });
 
   it("rejects initializing payment for a free course", async () => {
@@ -235,7 +235,11 @@ describe("Payments: student self-verify", () => {
       .set("Authorization", `Bearer ${signTokenFor(user)}`);
 
     assert.equal(res.status, 500);
-    assert.match(res.body.error, /amount too low/i);
+    assert.ok(res.body.reference, "a support reference is returned instead of the raw error");
+    assert.ok(
+      !/amount too low/i.test(res.body.error ?? ""),
+      "internal validation detail must not reach the client",
+    );
 
     const updated = await Payment.findByPk(payment.id);
     assert.equal(updated.status, "pending", "status should not have been upgraded to success");

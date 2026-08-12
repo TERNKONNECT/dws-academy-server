@@ -45,3 +45,7 @@ scripts/create-admin.js
 .gitignore
 scripts/create-super-admin.js
 .claude/
+
+# Scratch notes — `structure` once held a live database URI. Never again.
+structure
+*.scratch

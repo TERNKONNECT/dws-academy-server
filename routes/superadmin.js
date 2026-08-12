@@ -13,8 +13,13 @@ import {
   appUrl,
   sendEmail,
 } from "../config/email.js";
-import { protect, superAdminOnly, adminOnly, strictAdminOnly } from "../middleware/auth.js";
+import { protect, superAdminOnly, strictAdminOnly } from "../middleware/auth.js";
 import { Op } from "sequelize";
+import sequelize from "../config/db.js";
+import {
+  countLessonsByCourse,
+  countProgressByEnrollment,
+} from "../services/completion.js";
 
 const router = express.Router();
 
@@ -66,7 +71,7 @@ async function getGrowthData(Model, extraWhere = {}) {
 }
 
 // GET /api/superadmin/users — all users (learners)
-router.get("/users", protect, strictAdminOnly, async (req, res) => {
+router.get("/users", protect, superAdminOnly, async (req, res, next) => {
   try {
     const { search } = req.query;
     let whereClause = { role: "user" };
@@ -104,37 +109,57 @@ router.get("/users", protect, strictAdminOnly, async (req, res) => {
     }));
     res.json(mappedUsers);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
+// These two routes are the reason `strictAdminOnly` was the wrong guard: they take a
+// user id straight from the URL and never looked at whose account it was. Now they
+// are super-admin only *and* refuse to touch anything that isn't a learner, so the
+// last super-admin can't be deleted and admins can't be removed sideways.
+function rejectPrivilegedTarget(user, res) {
+  if (user.role !== "user") {
+    res.status(403).json({
+      error: "Only learner accounts can be managed here. Manage staff under Instructors.",
+    });
+    return true;
+  }
+  return false;
+}
+
 // PUT /api/superadmin/users/:id/toggle-block
-router.put("/users/:id/toggle-block", protect, strictAdminOnly, async (req, res) => {
+router.put("/users/:id/toggle-block", protect, superAdminOnly, async (req, res, next) => {
   try {
     const user = await User.findOne({ where: { id: req.params.id } });
     if (!user) return res.status(404).json({ error: "User not found" });
+    if (rejectPrivilegedTarget(user, res)) return;
+
     user.isBlocked = !user.isBlocked;
     await user.save();
     res.json({ ...user.toJSON(), _id: user.id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // DELETE /api/superadmin/users/:id
-router.delete("/users/:id", protect, strictAdminOnly, async (req, res) => {
+router.delete("/users/:id", protect, superAdminOnly, async (req, res, next) => {
   try {
     const user = await User.findOne({ where: { id: req.params.id } });
     if (!user) return res.status(404).json({ error: "User not found" });
+    if (rejectPrivilegedTarget(user, res)) return;
+    if (user.id === req.user.id)
+      return res.status(400).json({ error: "You cannot delete your own account" });
+
     await user.destroy();
     res.json({ message: "User deleted" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/instructors — all admins with their course counts
-router.get("/instructors", protect, strictAdminOnly, async (req, res) => {
+router.get("/instructors", protect, superAdminOnly, async (req, res, next) => {
   try {
     const instructors = await User.findAll({
       where: { role: "admin" },
@@ -149,27 +174,54 @@ router.get("/instructors", protect, strictAdminOnly, async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const result = await Promise.all(
-      instructors.map(async (instructor) => {
-        const courses = await Course.findAll({
-          where: { createdBy: instructor.id },
-          attributes: ["id"],
-        });
+    // Three grouped queries for the whole page, rather than three per instructor.
+    const courses = await Course.findAll({
+      where: { createdBy: instructors.map((i) => i.id) },
+      attributes: ["id", "createdBy"],
+      raw: true,
+    });
 
-        const courseIds = courses.map((c) => c.id);
+    const courseIdsByInstructor = new Map();
+    const instructorByCourse = new Map();
+    for (const course of courses) {
+      const list = courseIdsByInstructor.get(course.createdBy) ?? [];
+      list.push(course.id);
+      courseIdsByInstructor.set(course.createdBy, list);
+      instructorByCourse.set(course.id, course.createdBy);
+    }
 
-        const totalEnrollments =
-          courseIds.length > 0
-            ? await Enrollment.count({ where: { courseId: courseIds } })
-            : 0;
+    const enrollmentRows = courses.length
+      ? await Enrollment.findAll({
+          attributes: [
+            "courseId",
+            [sequelize.fn("COUNT", sequelize.col("id")), "total"],
+            [
+              sequelize.fn(
+                "SUM",
+                sequelize.literal(`CASE WHEN "isCompleted" THEN 1 ELSE 0 END`),
+              ),
+              "completed",
+            ],
+          ],
+          where: { courseId: courses.map((c) => c.id) },
+          group: ["courseId"],
+          raw: true,
+        })
+      : [];
 
-        const totalCompleted =
-          courseIds.length > 0
-            ? await Enrollment.count({
-                where: { courseId: courseIds, isCompleted: true },
-              })
-            : 0;
+    const totals = new Map();
+    for (const row of enrollmentRows) {
+      const instructorId = instructorByCourse.get(row.courseId);
+      const acc = totals.get(instructorId) ?? { enrollments: 0, completed: 0 };
+      acc.enrollments += Number(row.total) || 0;
+      acc.completed += Number(row.completed) || 0;
+      totals.set(instructorId, acc);
+    }
 
+    res.json(
+      instructors.map((instructor) => {
+        const { enrollments: totalEnrollments = 0, completed: totalCompleted = 0 } =
+          totals.get(instructor.id) ?? {};
         return {
           id: instructor.id,
           name: instructor.name,
@@ -177,7 +229,7 @@ router.get("/instructors", protect, strictAdminOnly, async (req, res) => {
           joinedAt: instructor.createdAt,
           inviteStatus: instructor.passwordSetupRequired ? "pending" : "accepted",
           inviteExpiresAt: instructor.adminInviteExpires,
-          totalCourses: courses.length,
+          totalCourses: (courseIdsByInstructor.get(instructor.id) ?? []).length,
           totalEnrollments,
           totalCompleted,
           completionRate:
@@ -187,16 +239,14 @@ router.get("/instructors", protect, strictAdminOnly, async (req, res) => {
         };
       }),
     );
-
-    res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/instructors/:id — one instructor's full details + courses
 // POST /api/superadmin/instructors/invite - invite a new admin by email
-router.post("/instructors/invite", protect, strictAdminOnly, async (req, res) => {
+router.post("/instructors/invite", protect, superAdminOnly, async (req, res, next) => {
   try {
     const { name, email, role } = req.body;
     if (!name || !email)
@@ -270,11 +320,11 @@ router.post("/instructors/invite", protect, strictAdminOnly, async (req, res) =>
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-router.get("/instructors/:id", protect, strictAdminOnly, async (req, res) => {
+router.get("/instructors/:id", protect, superAdminOnly, async (req, res, next) => {
   try {
     const instructor = await User.findOne({
       where: { id: req.params.id, role: "admin" },
@@ -288,39 +338,48 @@ router.get("/instructors/:id", protect, strictAdminOnly, async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
+    // Two grouped queries up front, then everything below is in-memory joins.
+    const courseIds = courses.map((c) => c.id);
+    const allEnrollments = courseIds.length
+      ? await Enrollment.findAll({
+          where: { courseId: courseIds },
+          include: [{ model: User, attributes: ["id", "name", "email"] }],
+        })
+      : [];
+
+    const [lessonCounts, progressCounts] = await Promise.all([
+      countLessonsByCourse(courseIds),
+      countProgressByEnrollment(allEnrollments.map((e) => e.id)),
+    ]);
+
+    const enrollmentsByCourse = new Map();
+    for (const enrollment of allEnrollments) {
+      const list = enrollmentsByCourse.get(enrollment.courseId) ?? [];
+      list.push(enrollment);
+      enrollmentsByCourse.set(enrollment.courseId, list);
+    }
+
     const coursesWithStats = await Promise.all(
       courses.map(async (course) => {
-        const totalLessons = await Lesson.count({
-          include: [
-            { model: Module, where: { courseId: course.id }, required: true },
-          ],
-        });
+        const totalLessons = lessonCounts.get(course.id) ?? 0;
+        const enrollments = enrollmentsByCourse.get(course.id) ?? [];
 
-        const enrollments = await Enrollment.findAll({
-          where: { courseId: course.id },
-          include: [{ model: User, attributes: ["id", "name", "email"] }],
+        const studentsWithProgress = enrollments.map((e) => {
+          const completedLessons = progressCounts.get(e.id) ?? 0;
+          return {
+            enrollmentId: e.id,
+            enrolledAt: e.createdAt,
+            isCompleted: e.isCompleted,
+            completedAt: e.completedAt,
+            user: e.User,
+            totalLessons,
+            completedLessons,
+            progressPct:
+              totalLessons > 0
+                ? Math.round((completedLessons / totalLessons) * 100)
+                : 0,
+          };
         });
-
-        const studentsWithProgress = await Promise.all(
-          enrollments.map(async (e) => {
-            const completedLessons = await LessonProgress.count({
-              where: { enrollmentId: e.id },
-            });
-            return {
-              enrollmentId: e.id,
-              enrolledAt: e.createdAt,
-              isCompleted: e.isCompleted,
-              completedAt: e.completedAt,
-              user: e.User,
-              totalLessons,
-              completedLessons,
-              progressPct:
-                totalLessons > 0
-                  ? Math.round((completedLessons / totalLessons) * 100)
-                  : 0,
-            };
-          }),
-        );
 
         return {
           ...course.toJSON(),
@@ -351,12 +410,12 @@ router.get("/instructors/:id", protect, strictAdminOnly, async (req, res) => {
       courses: coursesWithStats,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/stats — platform-wide or instructor-specific stats
-router.get("/stats", protect, strictAdminOnly, async (req, res) => {
+router.get("/stats", protect, strictAdminOnly, async (req, res, next) => {
   try {
     let totalUsers, totalAdmins, totalCourses, totalEnrollments, totalCompleted, totalLessons, totalQuizzes, activeUsers, totalRevenue;
     let recentActivity = [];
@@ -527,12 +586,12 @@ router.get("/stats", protect, strictAdminOnly, async (req, res) => {
       recentActivity,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/user-growth — user signups for the last six months
-router.get("/user-growth", protect, strictAdminOnly, async (req, res) => {
+router.get("/user-growth", protect, strictAdminOnly, async (req, res, next) => {
   try {
     if (req.user.role === "super-admin") {
       res.json(await getGrowthData(User));
@@ -552,12 +611,12 @@ router.get("/user-growth", protect, strictAdminOnly, async (req, res) => {
       res.json(await getGrowthData(User, { id: userIds }));
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/enrollment-growth — enrollments for the last six months
-router.get("/enrollment-growth", protect, strictAdminOnly, async (req, res) => {
+router.get("/enrollment-growth", protect, strictAdminOnly, async (req, res, next) => {
   try {
     if (req.user.role === "super-admin") {
       res.json(await getGrowthData(Enrollment));
@@ -570,12 +629,12 @@ router.get("/enrollment-growth", protect, strictAdminOnly, async (req, res) => {
       res.json(await getGrowthData(Enrollment, { courseId: courseIds }));
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/course-completion — course completion statistics
-router.get("/course-completion", protect, strictAdminOnly, async (req, res) => {
+router.get("/course-completion", protect, strictAdminOnly, async (req, res, next) => {
   try {
     let whereClause = {};
     if (req.user.role !== "super-admin") {
@@ -623,12 +682,12 @@ router.get("/course-completion", protect, strictAdminOnly, async (req, res) => {
 
     res.json({ completed, inProgress, notStarted });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/quiz-success — quiz success rates
-router.get("/quiz-success", protect, strictAdminOnly, async (req, res) => {
+router.get("/quiz-success", protect, strictAdminOnly, async (req, res, next) => {
   try {
     let courseIds = null;
     if (req.user.role !== "super-admin") {
@@ -656,28 +715,56 @@ router.get("/quiz-success", protect, strictAdminOnly, async (req, res) => {
       include: [quizInclude]
     });
 
+    // One grouped count for every course involved, instead of two per quiz.
+    const quizCourseIds = [...new Set(quizzes.map((q) => q.Module.Course.id))];
+    const rows = quizCourseIds.length
+      ? await Enrollment.findAll({
+          attributes: [
+            "courseId",
+            [sequelize.fn("COUNT", sequelize.col("id")), "total"],
+            [
+              sequelize.fn(
+                "SUM",
+                sequelize.literal(`CASE WHEN "isCompleted" THEN 1 ELSE 0 END`),
+              ),
+              "completed",
+            ],
+          ],
+          where: { courseId: quizCourseIds },
+          group: ["courseId"],
+          raw: true,
+        })
+      : [];
+
+    const byCourse = new Map(
+      rows.map((r) => [
+        r.courseId,
+        { total: Number(r.total) || 0, completed: Number(r.completed) || 0 },
+      ]),
+    );
+
     const labels = [];
     const passed = [];
     const failed = [];
 
     for (const quiz of quizzes) {
+      const stats = byCourse.get(quiz.Module.Course.id) ?? {
+        total: 0,
+        completed: 0,
+      };
       labels.push(quiz.title);
-      const courseId = quiz.Module.Course.id;
-      const enrollmentsCount = await Enrollment.count({ where: { courseId } });
-      const completedCount = await Enrollment.count({ where: { courseId, isCompleted: true } });
-      
-      passed.push(completedCount);
-      failed.push(Math.max(0, enrollmentsCount - completedCount));
+      passed.push(stats.completed);
+      failed.push(Math.max(0, stats.total - stats.completed));
     }
 
     res.json({ labels, passed, failed });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/superadmin/popular-courses — top courses by enrollment
-router.get("/popular-courses", protect, strictAdminOnly, async (req, res) => {
+router.get("/popular-courses", protect, strictAdminOnly, async (req, res, next) => {
   try {
     let courseWhere = {};
     if (req.user.role !== "super-admin") {
@@ -686,19 +773,35 @@ router.get("/popular-courses", protect, strictAdminOnly, async (req, res) => {
 
     const courses = await Course.findAll({
       where: courseWhere,
-      attributes: ["id", "title"]
+      attributes: ["id", "title"],
     });
 
-    const popular = [];
-    for (const course of courses) {
-      const count = await Enrollment.count({ where: { courseId: course.id } });
-      popular.push({ title: course.title, enrollments: count });
-    }
+    const counts = courses.length
+      ? await Enrollment.findAll({
+          attributes: [
+            "courseId",
+            [sequelize.fn("COUNT", sequelize.col("id")), "count"],
+          ],
+          where: { courseId: courses.map((c) => c.id) },
+          group: ["courseId"],
+          raw: true,
+        })
+      : [];
 
-    popular.sort((a, b) => b.enrollments - a.enrollments);
+    const countByCourse = new Map(
+      counts.map((r) => [r.courseId, Number(r.count) || 0]),
+    );
+
+    const popular = courses
+      .map((course) => ({
+        title: course.title,
+        enrollments: countByCourse.get(course.id) ?? 0,
+      }))
+      .sort((a, b) => b.enrollments - a.enrollments);
+
     res.json(popular.slice(0, 5));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

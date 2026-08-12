@@ -9,7 +9,7 @@ import cloudinary from "../config/cloudinary.js";
 const router = express.Router();
 
 // Public: Get all events with their images
-router.get("/", async (req, res) => {
+router.get("/", async (req, res, next) => {
   try {
     const events = await Event.findAll({
       include: [{ model: EventImage, as: "images" }],
@@ -34,12 +34,12 @@ router.get("/", async (req, res) => {
 
     res.json(formattedEvents);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // SuperAdmin: Create an event
-router.post("/", protect, superAdminOnly, async (req, res) => {
+router.post("/", protect, superAdminOnly, async (req, res, next) => {
   try {
     const { name, description, date } = req.body;
     if (!name) return res.status(400).json({ error: "Name is required" });
@@ -47,12 +47,12 @@ router.post("/", protect, superAdminOnly, async (req, res) => {
     const event = await Event.create({ name, description, date: date || null });
     res.status(201).json(event);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // SuperAdmin: Delete an event (also deletes images from S3 and DB via cascade/manual)
-router.delete("/:id", protect, superAdminOnly, async (req, res) => {
+router.delete("/:id", protect, superAdminOnly, async (req, res, next) => {
   try {
     const event = await Event.findByPk(req.params.id, {
       include: [{ model: EventImage, as: "images" }],
@@ -69,7 +69,7 @@ router.delete("/:id", protect, superAdminOnly, async (req, res) => {
     await event.destroy(); // Cascade delete event_images in DB
     res.json({ message: "Event deleted successfully" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -83,7 +83,7 @@ const getRawBody = (req) => {
 };
 
 // SuperAdmin: Get presigned URL for uploading an image
-router.post("/:id/images/presigned-url", protect, superAdminOnly, async (req, res) => {
+router.post("/:id/images/presigned-url", protect, superAdminOnly, async (req, res, next) => {
   try {
     const { filename, contentType } = req.body;
     const event = await Event.findByPk(req.params.id);
@@ -110,12 +110,12 @@ router.post("/:id/images/presigned-url", protect, superAdminOnly, async (req, re
       res.json({ uploadUrl, key, url });
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // SuperAdmin: Dev endpoint to handle local file upload to Cloudinary via PUT
-router.put("/:id/images/dev-upload", protect, superAdminOnly, async (req, res) => {
+router.put("/:id/images/dev-upload", protect, superAdminOnly, async (req, res, next) => {
   try {
     const key = req.query.key;
     if (!key) return res.status(400).json({ error: "Key query parameter is required" });
@@ -139,12 +139,12 @@ router.put("/:id/images/dev-upload", protect, superAdminOnly, async (req, res) =
 
     res.json({ message: "Dev image uploaded to Cloudinary successfully" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // SuperAdmin: Save uploaded image records to DB
-router.post("/:id/images", protect, superAdminOnly, async (req, res) => {
+router.post("/:id/images", protect, superAdminOnly, async (req, res, next) => {
   try {
     const { images } = req.body; // Array of { url, key }
     const eventId = req.params.id;
@@ -172,12 +172,12 @@ router.post("/:id/images", protect, superAdminOnly, async (req, res) => {
 
     res.status(201).json(formattedCreatedImages);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // SuperAdmin: Bulk delete images
-router.delete("/images/bulk", protect, superAdminOnly, async (req, res) => {
+router.delete("/images/bulk", protect, superAdminOnly, async (req, res, next) => {
   try {
     const { imageIds } = req.body; // Array of EventImage UUIDs
     if (!Array.isArray(imageIds) || imageIds.length === 0) {
@@ -195,7 +195,7 @@ router.delete("/images/bulk", protect, superAdminOnly, async (req, res) => {
 
     res.json({ message: "Images deleted successfully" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

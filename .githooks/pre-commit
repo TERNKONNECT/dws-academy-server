@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# Pre-commit gate for dws-academy-server.
+#
+# Enabled automatically by `npm install` (see the "prepare" script), or by hand:
+#   git config core.hooksPath .githooks
+#
+# Skip once, deliberately:  git commit --no-verify
+
+set -e
+
+RED=$(printf '\033[31m')
+GREEN=$(printf '\033[32m')
+YELLOW=$(printf '\033[33m')
+DIM=$(printf '\033[2m')
+OFF=$(printf '\033[0m')
+
+fail() {
+  echo "${RED}✗ $1${OFF}"
+  echo "${DIM}  Fix it, or commit with --no-verify if you know what you're doing.${OFF}"
+  exit 1
+}
+
+step() { echo "${DIM}→ $1${OFF}"; }
+ok()   { echo "${GREEN}✓ $1${OFF}"; }
+warn() { echo "${YELLOW}! $1${OFF}"; }
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.js' || true)
+if [ -z "$STAGED" ]; then
+  echo "${DIM}No JavaScript staged — skipping checks.${OFF}"
+  exit 0
+fi
+
+step "Syntax check (node --check)"
+for file in $STAGED; do
+  [ -f "$file" ] || continue
+  node --check "$file" || fail "Syntax error in $file"
+done
+ok "Syntax clean"
+
+# Secrets are the reason `structure` leaked a live database URI into the repo.
+step "Secret scan on staged content"
+if git diff --cached -U0 -- $STAGED \
+  | grep -nE '^\+.*(postgres(ql)?://[^ ]*:[^ ]*@|sk_live_[A-Za-z0-9]{10,}|AKIA[0-9A-Z]{16}|re_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
+  fail "Looks like a credential is being committed"
+fi
+ok "No credentials found"
+
+# The suite needs Postgres. Two ways to have one locally:
+#   1. The dedicated `docker-compose.test.yml` container on port 5544 — checked
+#      first because we know its credentials are right. It runs on 5544, not
+#      5432, since dev machines running other projects often already have
+#      something else bound to 5432 with different credentials — `nc -z` alone
+#      can't tell the difference, it only sees that *a* port is open.
+#   2. Whatever .env.test's DATABASE_URL points at (matches CI's setup), as a
+#      fallback for anyone not using the compose file.
+# If neither authenticates, warn and skip rather than block the commit; CI always
+# runs the suite regardless.
+step "Tests (node --test)"
+if nc -z localhost 5544 2>/dev/null; then
+  npm run test:local --silent || fail "Tests failing"
+  ok "Tests passing (via docker-compose.test.yml on :5544)"
+elif [ -f .env.test ]; then
+  DB_URL=$(grep '^DATABASE_URL=' .env.test | cut -d= -f2-)
+  HOST_PORT=$(echo "$DB_URL" | sed -E 's#.*@([^/]+)/.*#\1#')
+  HOST=$(echo "$HOST_PORT" | cut -d: -f1)
+  PORT=$(echo "$HOST_PORT" | cut -d: -f2)
+  [ -n "$PORT" ] || PORT=5432
+
+  if nc -z "$HOST" "$PORT" 2>/dev/null; then
+    npm test --silent || fail "Tests failing"
+    ok "Tests passing"
+  else
+    warn "No test Postgres reachable — skipping tests. CI will still run them."
+    echo "${DIM}  Start the dedicated one with: npm run test:db:up${OFF}"
+  fi
+else
+  warn ".env.test missing — skipping tests."
+fi
+
+echo "${GREEN}All pre-commit checks passed.${OFF}"
