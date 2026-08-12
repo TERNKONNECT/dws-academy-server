@@ -2,7 +2,7 @@ import express from "express";
 import { protect, adminOnly } from "../middleware/auth.js";
 import Faculty from "../models/Faculty.js";
 import multer from "multer";
-import { uploadFile, deleteFile } from "../utils/cloudinary.js";
+import { uploadFile, deleteFile } from "../config/storage.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -117,11 +117,11 @@ router.post("/admin/:id/avatar", protect, adminOnly, upload.single("avatar"), as
 
     const fileData = await uploadFile(req.file, "lms/faculty");
     
-    // Optional: Delete old avatar from Cloudinary if it exists and is a Cloudinary URL
+    // Optional: Delete old avatar from Cloudinary/S3 if it exists
     // (Skipping for now to keep it simple, but good practice)
 
     await faculty.update({
-      avatar: fileData.secure_url,
+      avatar: fileData.url,
     });
 
     res.json(faculty);
