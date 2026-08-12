@@ -15,7 +15,13 @@ const Testimonial = sequelize.define(
     },
     jobTitle: { 
       type: DataTypes.STRING, 
-      allowNull: false 
+      allowNull: true,
+      defaultValue: "",
+    },
+    companyName: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: "",
     },
     content: { 
       type: DataTypes.STRING(500), 

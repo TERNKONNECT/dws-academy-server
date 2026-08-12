@@ -33,15 +33,16 @@ router.get("/admin", protect, adminOnly, async (req, res) => {
 // POST /api/testimonials/admin — create a testimonial
 router.post("/admin", protect, adminOnly, async (req, res) => {
   try {
-    const { name, jobTitle, content, date, isActive } = req.body;
+    const { name, jobTitle, companyName, content, date, isActive } = req.body;
     
-    if (!name || !jobTitle || !content) {
-      return res.status(400).json({ error: "Name, job title, and content are required." });
+    if (!name || !content) {
+      return res.status(400).json({ error: "Name and content are required." });
     }
     
     const testimonial = await Testimonial.create({
       name,
-      jobTitle,
+      jobTitle: jobTitle || "",
+      companyName: companyName || "",
       content,
       date: date || new Date(),
       isActive: isActive !== undefined ? isActive : true,
@@ -61,11 +62,12 @@ router.put("/admin/:id", protect, adminOnly, async (req, res) => {
       return res.status(404).json({ error: "Testimonial not found" });
     }
     
-    const { name, jobTitle, content, date, isActive } = req.body;
+    const { name, jobTitle, companyName, content, date, isActive } = req.body;
     
     await testimonial.update({
       name: name !== undefined ? name : testimonial.name,
       jobTitle: jobTitle !== undefined ? jobTitle : testimonial.jobTitle,
+      companyName: companyName !== undefined ? companyName : testimonial.companyName,
       content: content !== undefined ? content : testimonial.content,
       date: date !== undefined ? date : testimonial.date,
       isActive: isActive !== undefined ? isActive : testimonial.isActive,
