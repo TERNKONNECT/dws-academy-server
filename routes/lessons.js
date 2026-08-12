@@ -1,8 +1,12 @@
 import express from "express";
-import multer from "multer";
 import Lesson from "../models/Lesson.js";
 import Module from "../models/Module.js";
-import { protect, adminOnly } from "../middleware/auth.js";
+import { protect, optionalAuth } from "../middleware/auth.js";
+import {
+  requireCourseAccess,
+  requireCourseOwnership,
+} from "../middleware/courseAccess.js";
+import { documentUpload, videoUpload } from "../middleware/uploads.js";
 import {
   createUploadUrl,
   uploadFile,
@@ -11,7 +15,21 @@ import {
 } from "../config/storage.js";
 
 const router = express.Router({ mergeParams: true });
-const upload = multer({ storage: multer.memoryStorage() });
+
+// Lesson bodies and signed media URLs are the product. Gate every read.
+router.use(optionalAuth);
+
+// Fields a lesson write may set. Keeps `moduleId`, `id`, and the Cloudinary/S3
+// pointers out of reach of a request body.
+const WRITABLE_LESSON_FIELDS = ["title", "content", "duration", "order", "type"];
+
+function pickLessonFields(body) {
+  const out = {};
+  for (const field of WRITABLE_LESSON_FIELDS) {
+    if (body[field] !== undefined) out[field] = body[field];
+  }
+  return out;
+}
 
 async function serializeLesson(lesson) {
   const data = lesson.toJSON ? lesson.toJSON() : lesson;
@@ -29,37 +47,52 @@ async function serializeLesson(lesson) {
   };
 }
 
+/** Confirms the module named in the URL really belongs to the resolved course. */
+async function moduleInCourse(req, res) {
+  const mod = await Module.findOne({
+    where: { id: req.params.moduleId, courseId: req.course.id },
+  });
+  if (!mod) {
+    res.status(404).json({ error: "Module not found" });
+    return null;
+  }
+  return mod;
+}
+
 // GET all lessons for a module
-router.get("/", async (req, res) => {
+router.get("/", requireCourseAccess, async (req, res, next) => {
   try {
+    if (!(await moduleInCourse(req, res))) return;
+
     const lessons = await Lesson.findAll({
       where: { moduleId: req.params.moduleId },
       order: [["order", "ASC"]],
     });
     res.json(await Promise.all(lessons.map(serializeLesson)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET single lesson
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireCourseAccess, async (req, res, next) => {
   try {
+    if (!(await moduleInCourse(req, res))) return;
+
     const lesson = await Lesson.findOne({
       where: { id: req.params.id, moduleId: req.params.moduleId },
     });
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
     res.json(await serializeLesson(lesson));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // POST create text lesson
-router.post("/text", protect, adminOnly, async (req, res) => {
+router.post("/text", protect, requireCourseOwnership, async (req, res, next) => {
   try {
-    const mod = await Module.findByPk(req.params.moduleId);
-    if (!mod) return res.status(404).json({ error: "Module not found" });
+    if (!(await moduleInCourse(req, res))) return;
 
     const { title, content, order } = req.body;
     if (!title) return res.status(400).json({ error: "Title is required" });
@@ -73,41 +106,44 @@ router.post("/text", protect, adminOnly, async (req, res) => {
     });
     res.status(201).json(lesson);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// POST create video lesson
-router.post("/video-upload-url", protect, adminOnly, async (req, res) => {
-  try {
-    const mod = await Module.findByPk(req.params.moduleId);
-    if (!mod) return res.status(404).json({ error: "Module not found" });
+// POST presigned URL for a direct-to-S3 video upload
+router.post(
+  "/video-upload-url",
+  protect,
+  requireCourseOwnership,
+  async (req, res, next) => {
+    try {
+      if (!(await moduleInCourse(req, res))) return;
 
-    const { filename, contentType } = req.body;
-    if (!filename)
-      return res.status(400).json({ error: "Filename is required" });
+      const { filename, contentType } = req.body;
+      if (!filename)
+        return res.status(400).json({ error: "Filename is required" });
 
-    const upload = await createUploadUrl({
-      filename,
-      contentType,
-      folder: "lms/lessons",
-    });
+      const upload = await createUploadUrl({
+        filename,
+        contentType,
+        folder: "lms/lessons",
+      });
 
-    res.json(upload);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+      res.json(upload);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.post(
   "/video",
   protect,
-  adminOnly,
-  upload.single("video"),
-  async (req, res) => {
+  requireCourseOwnership,
+  videoUpload.single("video"),
+  async (req, res, next) => {
     try {
-      const mod = await Module.findByPk(req.params.moduleId);
-      if (!mod) return res.status(404).json({ error: "Module not found" });
+      if (!(await moduleInCourse(req, res))) return;
       if (!req.file)
         return res.status(400).json({ error: "No video file uploaded" });
 
@@ -126,22 +162,25 @@ router.post(
       });
       res.status(201).json(await serializeLesson(lesson));
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
 
 // PUT update lesson
-router.put("/:id", protect, adminOnly, async (req, res) => {
+router.put("/:id", protect, requireCourseOwnership, async (req, res, next) => {
   try {
+    if (!(await moduleInCourse(req, res))) return;
+
     const lesson = await Lesson.findOne({
       where: { id: req.params.id, moduleId: req.params.moduleId },
     });
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
-    await lesson.update(req.body);
+
+    await lesson.update(pickLessonFields(req.body));
     res.json(await serializeLesson(lesson));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -149,10 +188,12 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
 router.post(
   "/:id/document",
   protect,
-  adminOnly,
-  upload.single("file"),
-  async (req, res) => {
+  requireCourseOwnership,
+  documentUpload.single("file"),
+  async (req, res, next) => {
     try {
+      if (!(await moduleInCourse(req, res))) return;
+
       const lesson = await Lesson.findOne({
         where: { id: req.params.id, moduleId: req.params.moduleId },
       });
@@ -172,7 +213,7 @@ router.post(
 
       res.json(await serializeLesson(lesson));
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
@@ -181,10 +222,12 @@ router.post(
 router.post(
   "/:id/transcript",
   protect,
-  adminOnly,
-  upload.single("file"),
-  async (req, res) => {
+  requireCourseOwnership,
+  documentUpload.single("file"),
+  async (req, res, next) => {
     try {
+      if (!(await moduleInCourse(req, res))) return;
+
       const lesson = await Lesson.findOne({
         where: { id: req.params.id, moduleId: req.params.moduleId },
       });
@@ -204,14 +247,16 @@ router.post(
 
       res.json(await serializeLesson(lesson));
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
 
 // DELETE lesson
-router.delete("/:id", protect, adminOnly, async (req, res) => {
+router.delete("/:id", protect, requireCourseOwnership, async (req, res, next) => {
   try {
+    if (!(await moduleInCourse(req, res))) return;
+
     const lesson = await Lesson.findOne({
       where: { id: req.params.id, moduleId: req.params.moduleId },
     });
@@ -230,15 +275,14 @@ router.delete("/:id", protect, adminOnly, async (req, res) => {
     await lesson.destroy();
     res.json({ message: "Lesson deleted" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// POST create video lesson from URL (used when frontend uploads directly to Cloudinary)
-router.post("/video-url", protect, adminOnly, async (req, res) => {
+// POST create video lesson from a URL already uploaded to S3/Cloudinary
+router.post("/video-url", protect, requireCourseOwnership, async (req, res, next) => {
   try {
-    const mod = await Module.findByPk(req.params.moduleId);
-    if (!mod) return res.status(404).json({ error: "Module not found" });
+    if (!(await moduleInCourse(req, res))) return;
 
     const { title, videoUrl, cloudinaryId, duration, order } = req.body;
     if (!title) return res.status(400).json({ error: "Title is required" });
@@ -256,7 +300,7 @@ router.post("/video-url", protect, adminOnly, async (req, res) => {
     });
     res.status(201).json(await serializeLesson(lesson));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

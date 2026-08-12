@@ -6,15 +6,34 @@ import User from "../models/User.js";
 import Course from "../models/Course.js";
 import Module from "../models/Module.js";
 import Lesson from "../models/Lesson.js";
-import { protect, adminOnly } from "../middleware/auth.js";
+import { protect, adminOnly, strictAdminOnly } from "../middleware/auth.js";
 import sequelize from "../config/db.js";
+import {
+  countLessonsByCourse,
+  countProgressByEnrollment,
+  evaluateCourseCompletion,
+  syncCourseCompletion,
+} from "../services/completion.js";
 
 const router = express.Router();
+
+// Staff who may look at a course they aren't enrolled in.
+const PREVIEW_ROLES = new Set(["admin", "super-admin", "operator"]);
+
+/** Courses this caller is allowed to see enrolment data for. `null` means all. */
+async function scopedCourseIds(req) {
+  if (req.user.role === "super-admin") return null;
+  const courses = await Course.findAll({
+    where: { createdBy: req.user.id },
+    attributes: ["id"],
+  });
+  return courses.map((c) => c.id);
+}
 
 // ── User endpoints ────────────────────────────────────────────────────────────
 
 // POST /api/enrollments/:courseId — enroll logged-in user in a course
-router.post("/:courseId", protect, async (req, res) => {
+router.post("/:courseId", protect, async (req, res, next) => {
   try {
     const course = await Course.findByPk(req.params.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
@@ -35,12 +54,12 @@ router.post("/:courseId", protect, async (req, res) => {
     if (!created) return res.status(400).json({ error: "Already enrolled" });
     res.status(201).json(enrollment);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/enrollments/my — get all courses the logged-in user is enrolled in
-router.get("/my", protect, async (req, res) => {
+router.get("/my", protect, async (req, res, next) => {
   try {
     const enrollments = await Enrollment.findAll({
       where: { userId: req.user.id },
@@ -48,22 +67,28 @@ router.get("/my", protect, async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const result = await Promise.all(
-      enrollments.map(async (e) => {
-        const totalLessons = await Lesson.count({
-          include: [
-            { model: Module, where: { courseId: e.courseId }, required: true },
-          ],
-        });
-        const completedProgress = await LessonProgress.findAll({
-          where: { enrollmentId: e.id },
-        });
-        const completedLessonsCount = completedProgress.length;
-        const progressPct =
-          totalLessons > 0
-            ? Math.round((completedLessonsCount / totalLessons) * 100)
-            : 0;
+    // Two grouped queries instead of two per enrolment.
+    const [lessonCounts, progressCounts, progressRows] = await Promise.all([
+      countLessonsByCourse(enrollments.map((e) => e.courseId)),
+      countProgressByEnrollment(enrollments.map((e) => e.id)),
+      LessonProgress.findAll({
+        where: { enrollmentId: enrollments.map((e) => e.id) },
+        attributes: ["enrollmentId", "lessonId"],
+        raw: true,
+      }),
+    ]);
 
+    const lessonIdsByEnrollment = new Map();
+    for (const row of progressRows) {
+      const list = lessonIdsByEnrollment.get(row.enrollmentId) ?? [];
+      list.push(row.lessonId);
+      lessonIdsByEnrollment.set(row.enrollmentId, list);
+    }
+
+    res.json(
+      enrollments.map((e) => {
+        const totalLessons = lessonCounts.get(e.courseId) ?? 0;
+        const completedLessons = progressCounts.get(e.id) ?? 0;
         return {
           enrollmentId: e.id,
           enrolledAt: e.createdAt,
@@ -71,16 +96,17 @@ router.get("/my", protect, async (req, res) => {
           completedAt: e.completedAt,
           course: e.Course,
           totalLessons,
-          completedLessons: completedLessonsCount,
-          completedLessonIds: completedProgress.map((p) => p.lessonId),
-          progressPct,
+          completedLessons,
+          completedLessonIds: lessonIdsByEnrollment.get(e.id) ?? [],
+          progressPct:
+            totalLessons > 0
+              ? Math.round((completedLessons / totalLessons) * 100)
+              : 0,
         };
       }),
     );
-
-    res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -88,17 +114,14 @@ router.get("/my", protect, async (req, res) => {
 router.post(
   "/:courseId/lessons/:lessonId/complete",
   protect,
-  async (req, res) => {
+  async (req, res, next) => {
     try {
-      const isPrivileged =
-        req.user.role === "admin" || req.user.role === "super-admin";
-
       const enrollment = await Enrollment.findOne({
         where: { userId: req.user.id, courseId: req.params.courseId },
       });
 
-      // Admins/super-admins can preview without an enrollment record
-      if (!enrollment && isPrivileged) {
+      // Staff can walk a course without an enrolment record; nothing is persisted.
+      if (!enrollment && PREVIEW_ROLES.has(req.user.role)) {
         return res.json({
           lessonId: req.params.lessonId,
           preview: true,
@@ -114,61 +137,56 @@ router.post(
         return res.status(404).json({ error: "Not enrolled in this course" });
       }
 
-      const lesson = await Lesson.findByPk(req.params.lessonId);
-      if (!lesson) return res.status(404).json({ error: "Lesson not found" });
-
-      const [progress, created] = await LessonProgress.findOrCreate({
-        where: { enrollmentId: enrollment.id, lessonId: req.params.lessonId },
-        defaults: {
-          enrollmentId: enrollment.id,
-          lessonId: req.params.lessonId,
-        },
-      });
-
-      // Check if all lessons in the course are now complete
-      const totalLessons = await Lesson.count({
+      // The lesson has to belong to *this* course. Without this check a student
+      // could post lesson ids harvested from other courses until the completed
+      // count reached this course's total, and collect a certificate for it.
+      const lesson = await Lesson.findOne({
+        where: { id: req.params.lessonId },
         include: [
           {
             model: Module,
+            attributes: [],
             where: { courseId: req.params.courseId },
             required: true,
           },
         ],
       });
-      const completedLessons = await LessonProgress.count({
-        where: { enrollmentId: enrollment.id },
-      });
-
-      if (totalLessons > 0 && completedLessons >= totalLessons) {
-        await enrollment.update({ isCompleted: true, completedAt: new Date() });
+      if (!lesson) {
+        return res
+          .status(404)
+          .json({ error: "Lesson not found in this course" });
       }
 
+      const [, created] = await LessonProgress.findOrCreate({
+        where: { enrollmentId: enrollment.id, lessonId: lesson.id },
+        defaults: { enrollmentId: enrollment.id, lessonId: lesson.id },
+      });
+
+      const completion = await syncCourseCompletion(enrollment);
+
       res.json({
-        lessonId: req.params.lessonId,
+        lessonId: lesson.id,
         alreadyCompleted: !created,
-        totalLessons,
-        completedLessons,
-        progressPct: Math.round((completedLessons / totalLessons) * 100),
-        courseCompleted: enrollment.isCompleted,
+        totalLessons: completion.totalLessons,
+        completedLessons: completion.completedLessons,
+        progressPct: completion.progressPct,
+        courseCompleted: completion.isCompleted,
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
 
 // GET /api/enrollments/:courseId/progress — get logged-in user's progress on a course
-router.get("/:courseId/progress", protect, async (req, res) => {
+router.get("/:courseId/progress", protect, async (req, res, next) => {
   try {
     const enrollment = await Enrollment.findOne({
       where: { userId: req.user.id, courseId: req.params.courseId },
     });
 
-    // Admins/super-admins can preview without enrollment
     if (!enrollment) {
-      const isPrivileged =
-        req.user.role === "admin" || req.user.role === "super-admin";
-      if (isPrivileged) {
+      if (PREVIEW_ROLES.has(req.user.role)) {
         return res.json({
           preview: true,
           enrollmentId: null,
@@ -184,52 +202,53 @@ router.get("/:courseId/progress", protect, async (req, res) => {
       return res.status(404).json({ error: "Not enrolled" });
     }
 
-    const completedLessons = await LessonProgress.findAll({
-      where: { enrollmentId: enrollment.id },
-    });
-
-    const totalLessons = await Lesson.count({
-      include: [
-        {
-          model: Module,
-          where: { courseId: req.params.courseId },
-          required: true,
-        },
-      ],
-    });
+    const [completion, completedLessons] = await Promise.all([
+      evaluateCourseCompletion(enrollment),
+      LessonProgress.findAll({
+        where: { enrollmentId: enrollment.id },
+        attributes: ["lessonId"],
+        raw: true,
+      }),
+    ]);
 
     res.json({
       enrollmentId: enrollment.id,
       enrolledAt: enrollment.createdAt,
       isCompleted: enrollment.isCompleted,
       completedAt: enrollment.completedAt,
-      totalLessons,
-      completedLessons: completedLessons.length,
-      progressPct:
-        totalLessons > 0
-          ? Math.round((completedLessons.length / totalLessons) * 100)
-          : 0,
+      totalLessons: completion.totalLessons,
+      completedLessons: completion.completedLessons,
+      totalQuizzes: completion.totalQuizzes,
+      passedQuizzes: completion.passedQuizzes,
+      progressPct: completion.progressPct,
       completedLessonIds: completedLessons.map((p) => p.lessonId),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // ── Admin endpoints ───────────────────────────────────────────────────────────
 
 // POST /api/enrollments/admin/enroll — admin/instructor enrolls a registered user by email
-router.post("/admin/enroll", protect, adminOnly, async (req, res) => {
+router.post("/admin/enroll", protect, strictAdminOnly, async (req, res, next) => {
   try {
     const { email, courseId } = req.body;
 
     if (!email || !courseId) {
-      return res
-        .status(400)
-        .json({ error: "Email and courseId are required" });
+      return res.status(400).json({ error: "Email and courseId are required" });
     }
 
-    // Look up the user by email
+    const course = await Course.findByPk(courseId);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
+    // An instructor can only grant access to their own courses.
+    if (req.user.role !== "super-admin" && course.createdBy !== req.user.id) {
+      return res
+        .status(403)
+        .json({ error: "Not authorized to enrol students in this course" });
+    }
+
     const user = await User.findOne({
       where: { email: email.toLowerCase().trim() },
     });
@@ -239,13 +258,6 @@ router.post("/admin/enroll", protect, adminOnly, async (req, res) => {
         .json({ error: "User does not exist on the platform" });
     }
 
-    // Verify the course exists
-    const course = await Course.findByPk(courseId);
-    if (!course) {
-      return res.status(404).json({ error: "Course not found" });
-    }
-
-    // Check for existing enrollment
     const [enrollment, created] = await Enrollment.findOrCreate({
       where: { userId: user.id, courseId },
       defaults: { userId: user.id, courseId, enrolledBy: req.user.id },
@@ -269,14 +281,19 @@ router.post("/admin/enroll", protect, adminOnly, async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// GET /api/enrollments/admin/all — all enrollments across all courses
-router.get("/admin/all", protect, adminOnly, async (req, res) => {
+// GET /api/enrollments/admin/all — enrollments, scoped to the caller's own courses
+router.get("/admin/all", protect, adminOnly, async (req, res, next) => {
   try {
+    const courseIds = await scopedCourseIds(req);
+    const where = courseIds === null ? {} : { courseId: courseIds };
+    if (courseIds !== null && courseIds.length === 0) return res.json([]);
+
     const enrollments = await Enrollment.findAll({
+      where,
       include: [
         { model: User, attributes: ["id", "name", "email"] },
         { model: Course, attributes: ["id", "title", "difficulty", "status"] },
@@ -284,16 +301,15 @@ router.get("/admin/all", protect, adminOnly, async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const result = await Promise.all(
-      enrollments.map(async (e) => {
-        const totalLessons = await Lesson.count({
-          include: [
-            { model: Module, where: { courseId: e.courseId }, required: true },
-          ],
-        });
-        const completedLessons = await LessonProgress.count({
-          where: { enrollmentId: e.id },
-        });
+    const [lessonCounts, progressCounts] = await Promise.all([
+      countLessonsByCourse([...new Set(enrollments.map((e) => e.courseId))]),
+      countProgressByEnrollment(enrollments.map((e) => e.id)),
+    ]);
+
+    res.json(
+      enrollments.map((e) => {
+        const totalLessons = lessonCounts.get(e.courseId) ?? 0;
+        const completedLessons = progressCounts.get(e.id) ?? 0;
         return {
           enrollmentId: e.id,
           enrolledAt: e.createdAt,
@@ -310,18 +326,22 @@ router.get("/admin/all", protect, adminOnly, async (req, res) => {
         };
       }),
     );
-
-    res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/enrollments/admin/courses/:courseId — all users enrolled in a specific course
-router.get("/admin/courses/:courseId", protect, adminOnly, async (req, res) => {
+router.get("/admin/courses/:courseId", protect, adminOnly, async (req, res, next) => {
   try {
     const course = await Course.findByPk(req.params.courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
+
+    if (req.user.role !== "super-admin" && course.createdBy !== req.user.id) {
+      return res
+        .status(403)
+        .json({ error: "Not authorized to view students for this course" });
+    }
 
     const where = { courseId: req.params.courseId };
     if (req.query.source === "admin") where.enrolledBy = { [Op.ne]: null };
@@ -336,77 +356,80 @@ router.get("/admin/courses/:courseId", protect, adminOnly, async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const totalLessons = await Lesson.count({
-      include: [
-        {
-          model: Module,
-          where: { courseId: req.params.courseId },
-          required: true,
-        },
-      ],
-    });
-
-    const result = await Promise.all(
-      enrollments.map(async (e) => {
-        const completedLessons = await LessonProgress.count({
-          where: { enrollmentId: e.id },
-        });
-        return {
-          enrollmentId: e.id,
-          enrolledAt: e.createdAt,
-          isCompleted: e.isCompleted,
-          completedAt: e.completedAt,
-          user: e.User,
-          enrolledByAdmin: e.EnrolledByAdmin
-            ? { id: e.EnrolledByAdmin.id, name: e.EnrolledByAdmin.name }
-            : null,
-          totalLessons,
-          completedLessons,
-          progressPct:
-            totalLessons > 0
-              ? Math.round((completedLessons / totalLessons) * 100)
-              : 0,
-        };
-      }),
+    const lessonCounts = await countLessonsByCourse([req.params.courseId]);
+    const totalLessons = lessonCounts.get(req.params.courseId) ?? 0;
+    const progressCounts = await countProgressByEnrollment(
+      enrollments.map((e) => e.id),
     );
 
+    const result = enrollments.map((e) => {
+      const completedLessons = progressCounts.get(e.id) ?? 0;
+      return {
+        enrollmentId: e.id,
+        enrolledAt: e.createdAt,
+        isCompleted: e.isCompleted,
+        completedAt: e.completedAt,
+        user: e.User,
+        enrolledByAdmin: e.EnrolledByAdmin
+          ? { id: e.EnrolledByAdmin.id, name: e.EnrolledByAdmin.name }
+          : null,
+        totalLessons,
+        completedLessons,
+        progressPct:
+          totalLessons > 0
+            ? Math.round((completedLessons / totalLessons) * 100)
+            : 0,
+      };
+    });
+
     res.json({
-      course: { id: course.id, title: course.title, pricingType: course.pricingType },
+      course: {
+        id: course.id,
+        title: course.title,
+        pricingType: course.pricingType,
+      },
       totalEnrolled: result.length,
       totalCompleted: result.filter((r) => r.isCompleted).length,
       students: result,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// GET /api/enrollments/admin/users/:userId — all courses a specific user is enrolled in
-router.get("/admin/users/:userId", protect, adminOnly, async (req, res) => {
+// GET /api/enrollments/admin/users/:userId — a user's enrolments in the caller's courses
+router.get("/admin/users/:userId", protect, adminOnly, async (req, res, next) => {
   try {
     const user = await User.findByPk(req.params.userId, {
       attributes: ["id", "name", "email", "createdAt"],
     });
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    const courseIds = await scopedCourseIds(req);
+    const where = { userId: req.params.userId };
+    if (courseIds !== null) {
+      if (courseIds.length === 0) return res.json({ user, enrollments: [] });
+      where.courseId = courseIds;
+    }
+
     const enrollments = await Enrollment.findAll({
-      where: { userId: req.params.userId },
+      where,
       include: [
         { model: Course, attributes: ["id", "title", "difficulty", "status"] },
       ],
       order: [["createdAt", "DESC"]],
     });
 
-    const result = await Promise.all(
-      enrollments.map(async (e) => {
-        const totalLessons = await Lesson.count({
-          include: [
-            { model: Module, where: { courseId: e.courseId }, required: true },
-          ],
-        });
-        const completedLessons = await LessonProgress.count({
-          where: { enrollmentId: e.id },
-        });
+    const [lessonCounts, progressCounts] = await Promise.all([
+      countLessonsByCourse([...new Set(enrollments.map((e) => e.courseId))]),
+      countProgressByEnrollment(enrollments.map((e) => e.id)),
+    ]);
+
+    res.json({
+      user,
+      enrollments: enrollments.map((e) => {
+        const totalLessons = lessonCounts.get(e.courseId) ?? 0;
+        const completedLessons = progressCounts.get(e.id) ?? 0;
         return {
           enrollmentId: e.id,
           enrolledAt: e.createdAt,
@@ -421,27 +444,34 @@ router.get("/admin/users/:userId", protect, adminOnly, async (req, res) => {
               : 0,
         };
       }),
-    );
-
-    res.json({ user, enrollments: result });
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// GET /api/enrollments/admin/stats — overall platform statistics
-router.get("/admin/stats", protect, adminOnly, async (req, res) => {
+// GET /api/enrollments/admin/stats — platform statistics, scoped to the caller
+router.get("/admin/stats", protect, adminOnly, async (req, res, next) => {
   try {
+    const courseIds = await scopedCourseIds(req);
+    const enrollmentWhere = courseIds === null ? {} : { courseId: courseIds };
+
     const [totalUsers, totalCourses, totalEnrollments, totalCompleted] =
       await Promise.all([
-        User.count({ where: { role: "user" } }),
-        Course.count(),
-        Enrollment.count(),
-        Enrollment.count({ where: { isCompleted: true } }),
+        courseIds === null
+          ? User.count({ where: { role: "user" } })
+          : Enrollment.count({
+              distinct: true,
+              col: "userId",
+              where: enrollmentWhere,
+            }),
+        courseIds === null ? Course.count() : courseIds.length,
+        Enrollment.count({ where: enrollmentWhere }),
+        Enrollment.count({ where: { ...enrollmentWhere, isCompleted: true } }),
       ]);
 
-    // Top 5 most enrolled courses
     const topCourses = await Enrollment.findAll({
+      where: enrollmentWhere,
       attributes: [
         "courseId",
         [
@@ -467,11 +497,11 @@ router.get("/admin/stats", protect, adminOnly, async (req, res) => {
       topCourses: topCourses.map((e) => ({
         courseId: e.courseId,
         title: e.Course?.title,
-        enrollmentCount: parseInt(e.dataValues.enrollmentCount),
+        enrollmentCount: parseInt(e.dataValues.enrollmentCount, 10),
       })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

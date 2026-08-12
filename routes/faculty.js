@@ -9,7 +9,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
 
 // GET /api/faculty — public endpoint to fetch active faculty (limited to 4)
-router.get("/", async (req, res) => {
+router.get("/", async (req, res, next) => {
   try {
     const faculties = await Faculty.findAll({
       where: { isActive: true },
@@ -18,26 +18,24 @@ router.get("/", async (req, res) => {
     });
     res.json(faculties);
   } catch (error) {
-    console.error("Error fetching faculty:", error);
-    res.status(500).json({ error: "Server error fetching faculty" });
+    next(error);
   }
 });
 
 // GET /api/faculty/admin — admin endpoint to fetch all faculty
-router.get("/admin", protect, adminOnly, async (req, res) => {
+router.get("/admin", protect, adminOnly, async (req, res, next) => {
   try {
     const faculties = await Faculty.findAll({
       order: [["createdAt", "DESC"]],
     });
     res.json(faculties);
   } catch (error) {
-    console.error("Error fetching faculty for admin:", error);
-    res.status(500).json({ error: "Server error fetching faculty" });
+    next(error);
   }
 });
 
 // POST /api/faculty/admin — create a faculty member
-router.post("/admin", protect, adminOnly, async (req, res) => {
+router.post("/admin", protect, adminOnly, async (req, res, next) => {
   try {
     const { name, jobTitle, company, shortDescription, avatar, isActive } = req.body;
     
@@ -56,13 +54,12 @@ router.post("/admin", protect, adminOnly, async (req, res) => {
     
     res.status(201).json(faculty);
   } catch (error) {
-    console.error("Error creating faculty:", error);
-    res.status(500).json({ error: "Server error creating faculty" });
+    next(error);
   }
 });
 
 // PUT /api/faculty/admin/:id — update a faculty member
-router.put("/admin/:id", protect, adminOnly, async (req, res) => {
+router.put("/admin/:id", protect, adminOnly, async (req, res, next) => {
   try {
     const faculty = await Faculty.findByPk(req.params.id);
     if (!faculty) {
@@ -82,13 +79,12 @@ router.put("/admin/:id", protect, adminOnly, async (req, res) => {
     
     res.json(faculty);
   } catch (error) {
-    console.error("Error updating faculty:", error);
-    res.status(500).json({ error: "Server error updating faculty" });
+    next(error);
   }
 });
 
 // DELETE /api/faculty/admin/:id — delete a faculty member
-router.delete("/admin/:id", protect, adminOnly, async (req, res) => {
+router.delete("/admin/:id", protect, adminOnly, async (req, res, next) => {
   try {
     const faculty = await Faculty.findByPk(req.params.id);
     if (!faculty) {
@@ -98,13 +94,12 @@ router.delete("/admin/:id", protect, adminOnly, async (req, res) => {
     await faculty.destroy();
     res.json({ message: "Faculty removed successfully" });
   } catch (error) {
-    console.error("Error deleting faculty:", error);
-    res.status(500).json({ error: "Server error deleting faculty" });
+    next(error);
   }
 });
 
 // POST /api/faculty/admin/:id/avatar — upload faculty avatar
-router.post("/admin/:id/avatar", protect, adminOnly, upload.single("avatar"), async (req, res) => {
+router.post("/admin/:id/avatar", protect, adminOnly, upload.single("avatar"), async (req, res, next) => {
   try {
     const faculty = await Faculty.findByPk(req.params.id);
     if (!faculty) {
@@ -126,8 +121,7 @@ router.post("/admin/:id/avatar", protect, adminOnly, upload.single("avatar"), as
 
     res.json(faculty);
   } catch (error) {
-    console.error("Error uploading avatar:", error);
-    res.status(500).json({ error: "Server error uploading avatar" });
+    next(error);
   }
 });
 

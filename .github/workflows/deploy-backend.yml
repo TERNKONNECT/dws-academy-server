@@ -37,6 +37,11 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Syntax check
+        run: |
+          find . -name '*.js' -not -path './node_modules/*' -print0 \
+            | xargs -0 -n1 node --check
+
       - name: Run tests
         run: npm test
 
@@ -68,17 +73,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Every variable the running app reads. PAYSTACK_SECRET_KEY was missing, which
+      # meant the webhook HMAC'd against an empty string and rejected every callback.
       - name: Create .env file
         run: |
-          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
-          echo "AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }}" >> .env
-          echo "AWS_S3_REGION=${{ secrets.AWS_REGION }}" >> .env
-          echo "RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}" >> .env
-          echo "FRONTEND_URL=${{ secrets.FRONTEND_URL }}" >> .env
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
-          echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> .env
-          echo "NODE_ENV=${{ secrets.NODE_ENV }}" >> .env
+          {
+            echo "NODE_ENV=production"
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL }}"
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}"
+            echo "FRONTEND_URL=${{ secrets.FRONTEND_URL }}"
+            echo "AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }}"
+            echo "AWS_S3_REGION=${{ secrets.AWS_REGION }}"
+            echo "RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}"
+            echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}"
+            echo "PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }}"
+            echo "PAYSTACK_SUBACCOUNT=${{ secrets.PAYSTACK_SUBACCOUNT }}"
+            echo "CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}"
+            echo "CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }}"
+            echo "CLOUDINARY_API_SECRET=${{ secrets.CLOUDINARY_API_SECRET }}"
+          } >> .env
+
+      # Fail loudly at deploy time rather than silently at the first webhook.
+      - name: Verify required secrets are present
+        run: |
+          for key in DATABASE_URL JWT_SECRET FRONTEND_URL PAYSTACK_SECRET_KEY RESEND_API_KEY; do
+            if ! grep -q "^${key}=." .env; then
+              echo "::error::${key} is empty. Set it in repository secrets."
+              exit 1
+            fi
+          done
 
       - name: Sync Database Schema
         env:

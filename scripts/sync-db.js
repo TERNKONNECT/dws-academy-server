@@ -10,7 +10,6 @@ import "../models/QuizAttempt.js";
 import "../models/Enrollment.js";
 import "../models/LessonProgress.js";
 import "../models/Review.js";
-import "../models/Video.js";
 import "../models/Testimonial.js";
 import "../models/Faculty.js";
 

@@ -22,7 +22,7 @@ async function serializeProfile(user) {
 }
 
 // GET /api/profile — get logged-in admin's profile
-router.get("/", protect, async (req, res) => {
+router.get("/", protect, async (req, res, next) => {
   try {
     const user = await User.findByPk(req.user.id, {
       attributes: [
@@ -40,12 +40,12 @@ router.get("/", protect, async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(await serializeProfile(user));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // PUT /api/profile — update name, title, bio
-router.put("/", protect, async (req, res) => {
+router.put("/", protect, async (req, res, next) => {
   try {
     const { name, title, bio } = req.body;
     const user = await User.findByPk(req.user.id);
@@ -53,7 +53,7 @@ router.put("/", protect, async (req, res) => {
     await user.update({ name, title, bio });
     res.json(await serializeProfile(user));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -62,7 +62,7 @@ router.post(
   "/avatar",
   protect,
   upload.single("avatar"),
-  async (req, res) => {
+  async (req, res, next) => {
     try {
       if (!req.file)
         return res.status(400).json({ error: "No image uploaded" });
@@ -80,13 +80,13 @@ router.post(
       });
       res.json(await serializeProfile(user));
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   },
 );
 
 // GET /api/profile/:adminId — public profile of an instructor (for DWSAcademy -ui)
-router.get("/:adminId", async (req, res) => {
+router.get("/:adminId", async (req, res, next) => {
   try {
     const user = await User.findOne({
       where: { id: req.params.adminId, role: "admin" },
@@ -106,12 +106,12 @@ router.get("/:adminId", async (req, res) => {
     delete profile.role;
     res.json(profile);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // POST /api/profile/avatar-url — save avatar URL from Cloudinary
-router.post("/avatar-url", protect, async (req, res) => {
+router.post("/avatar-url", protect, async (req, res, next) => {
   try {
     const { avatar, avatarCloudinaryId } = req.body;
     if (!avatar)
@@ -121,7 +121,7 @@ router.post("/avatar-url", protect, async (req, res) => {
     await user.update({ avatar, avatarCloudinaryId });
     res.json(await serializeProfile(user));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 

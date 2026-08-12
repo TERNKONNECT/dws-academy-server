@@ -12,7 +12,12 @@
     "create-admin": "node --require dotenv/config scripts/create-admin.js",
     "create-super-admin": "node --require dotenv/config scripts/create-super-admin.js",
     "build": "echo 'No build step needed'",
-    "test": "node --env-file=.env.test --experimental-test-module-mocks --test --test-concurrency=1 \"tests/**/*.test.js\""
+    "test": "node --env-file=.env.test --experimental-test-module-mocks --test --test-concurrency=1 \"tests/**/*.test.js\"",
+    "test:db:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "test:db:down": "docker compose -f docker-compose.test.yml down",
+    "test:local": "DATABASE_URL=postgres://postgres:postgres@localhost:5544/dws_academy_test npm test",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "verify": "npm test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",

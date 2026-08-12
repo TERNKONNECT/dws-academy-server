@@ -22,6 +22,10 @@ const User = sequelize.define(
     emailVerificationExpires: { type: DataTypes.DATE, allowNull: true },
     passwordResetOtp: { type: DataTypes.STRING, allowNull: true },
     passwordResetOtpExpires: { type: DataTypes.DATE, allowNull: true },
+    // Wrong-code counter for both verification and reset codes. Reset on every new
+    // code issued, and on success. Unlike IP rate limiting this survives horizontal
+    // scaling, so a six-digit code can't be walked through from many addresses.
+    otpAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     adminInviteToken: { type: DataTypes.STRING, allowNull: true },
     adminInviteExpires: { type: DataTypes.DATE, allowNull: true },
     passwordSetupRequired: { type: DataTypes.BOOLEAN, defaultValue: false },

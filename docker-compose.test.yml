@@ -1,0 +1,22 @@
+services:
+  # Dedicated test database for local development.
+  #
+  # Bound to 5544, not 5432 — the default in .env.test — because .env.test also has
+  # to match what GitHub Actions' isolated service container uses in CI, and on a
+  # dev machine that runs other projects, 5432 is often already taken by one of
+  # them. `npm run test:local` points DATABASE_URL at this container instead of
+  # .env.test's, so nothing here has to touch the CI-facing file.
+  test-db:
+    image: postgres:16-alpine
+    container_name: dws-academy-test-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dws_academy_test
+    ports:
+      - "5544:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

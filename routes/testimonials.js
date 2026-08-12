@@ -5,7 +5,7 @@ import { protect, adminOnly } from "../middleware/auth.js";
 const router = express.Router();
 
 // GET /api/testimonials — get all active testimonials (public)
-router.get("/", async (req, res) => {
+router.get("/", async (req, res, next) => {
   try {
     const testimonials = await Testimonial.findAll({
       where: { isActive: true },
@@ -14,24 +14,24 @@ router.get("/", async (req, res) => {
     });
     res.json(testimonials);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // GET /api/testimonials/admin — admin sees all testimonials
-router.get("/admin", protect, adminOnly, async (req, res) => {
+router.get("/admin", protect, adminOnly, async (req, res, next) => {
   try {
     const testimonials = await Testimonial.findAll({
       order: [["createdAt", "DESC"]],
     });
     res.json(testimonials);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // POST /api/testimonials/admin — create a testimonial
-router.post("/admin", protect, adminOnly, async (req, res) => {
+router.post("/admin", protect, adminOnly, async (req, res, next) => {
   try {
     const { name, jobTitle, companyName, content, date, isActive } = req.body;
     
@@ -50,12 +50,12 @@ router.post("/admin", protect, adminOnly, async (req, res) => {
     
     res.status(201).json(testimonial);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // PUT /api/testimonials/admin/:id — update a testimonial
-router.put("/admin/:id", protect, adminOnly, async (req, res) => {
+router.put("/admin/:id", protect, adminOnly, async (req, res, next) => {
   try {
     const testimonial = await Testimonial.findByPk(req.params.id);
     if (!testimonial) {
@@ -75,12 +75,12 @@ router.put("/admin/:id", protect, adminOnly, async (req, res) => {
     
     res.json(testimonial);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // DELETE /api/testimonials/admin/:id — delete a testimonial
-router.delete("/admin/:id", protect, adminOnly, async (req, res) => {
+router.delete("/admin/:id", protect, adminOnly, async (req, res, next) => {
   try {
     const testimonial = await Testimonial.findByPk(req.params.id);
     if (!testimonial) {
@@ -90,7 +90,7 @@ router.delete("/admin/:id", protect, adminOnly, async (req, res) => {
     await testimonial.destroy();
     res.json({ message: "Testimonial deleted successfully" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
