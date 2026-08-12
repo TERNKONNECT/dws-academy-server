@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { connectDB } from "../config/db.js";
 import sequelize from "../config/db.js";
 import User from "../models/User.js";
@@ -10,6 +11,7 @@ import "../models/Enrollment.js";
 import "../models/LessonProgress.js";
 import "../models/Review.js";
 import "../models/Video.js";
+import "../models/Testimonial.js";
 
 // Make sure associations are set up before syncing
 setupCourseAssociations(User);
