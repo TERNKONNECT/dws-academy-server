@@ -34,8 +34,21 @@ const dbReady = connectDB(); // Connect and apply additive schema guards once at
 const app = express();
 
 // CORS
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://schoolofeventsafrica.com",
+  "https://www.schoolofeventsafrica.com",
+  "https://dws.ternkonnect.com",
+];
+
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader(
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, DELETE, OPTIONS, PATCH",
