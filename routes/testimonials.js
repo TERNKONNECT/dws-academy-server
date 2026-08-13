@@ -2,7 +2,15 @@ import express from "express";
 import Testimonial from "../models/Testimonial.js";
 import { protect, adminOnly } from "../middleware/auth.js";
 import { imageUpload } from "../middleware/uploads.js";
-import { uploadFile, deleteFile } from "../config/storage.js";
+import { uploadFile, deleteFile, getFileUrl } from "../config/storage.js";
+
+async function serializeTestimonial(testimonial) {
+  const data = testimonial.toJSON ? testimonial.toJSON() : testimonial;
+  return {
+    ...data,
+    image: await getFileUrl(data.imageCloudinaryId, data.image),
+  };
+}
 
 const router = express.Router();
 
@@ -14,7 +22,7 @@ router.get("/", async (req, res, next) => {
       order: [["date", "DESC"], ["createdAt", "DESC"]],
       limit: 10,
     });
-    res.json(testimonials);
+    res.json(await Promise.all(testimonials.map(serializeTestimonial)));
   } catch (err) {
     next(err);
   }
@@ -26,7 +34,7 @@ router.get("/admin", protect, adminOnly, async (req, res, next) => {
     const testimonials = await Testimonial.findAll({
       order: [["createdAt", "DESC"]],
     });
-    res.json(testimonials);
+    res.json(await Promise.all(testimonials.map(serializeTestimonial)));
   } catch (err) {
     next(err);
   }
@@ -50,7 +58,7 @@ router.post("/admin", protect, adminOnly, async (req, res, next) => {
       isActive: isActive !== undefined ? isActive : true,
     });
 
-    res.status(201).json(testimonial);
+    res.status(201).json(await serializeTestimonial(testimonial));
   } catch (err) {
     next(err);
   }
@@ -75,7 +83,7 @@ router.put("/admin/:id", protect, adminOnly, async (req, res, next) => {
       isActive: isActive !== undefined ? isActive : testimonial.isActive,
     });
 
-    res.json(testimonial);
+    res.json(await serializeTestimonial(testimonial));
   } catch (err) {
     next(err);
   }
@@ -109,7 +117,7 @@ router.post(
         imageCloudinaryId: fileData.id,
       });
 
-      res.json(testimonial);
+      res.json(await serializeTestimonial(testimonial));
     } catch (err) {
       next(err);
     }
@@ -129,7 +137,7 @@ router.delete("/admin/:id/image", protect, adminOnly, async (req, res, next) => 
     }
     await testimonial.update({ image: "", imageCloudinaryId: "" });
 
-    res.json(testimonial);
+    res.json(await serializeTestimonial(testimonial));
   } catch (err) {
     next(err);
   }
