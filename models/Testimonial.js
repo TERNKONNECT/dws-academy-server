@@ -23,11 +23,23 @@ const Testimonial = sequelize.define(
       allowNull: true,
       defaultValue: "",
     },
-    content: { 
-      type: DataTypes.STRING(500), 
-      allowNull: false 
+    content: {
+      type: DataTypes.STRING(500),
+      allowNull: false
     },
-    date: { 
+    // Optional — a testimonial with no photo still renders fine (the public page
+    // falls back to initials).
+    image: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: "",
+    },
+    imageCloudinaryId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: "",
+    },
+    date: {
       type: DataTypes.DATE, 
       defaultValue: DataTypes.NOW 
     },
