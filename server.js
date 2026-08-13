@@ -75,6 +75,7 @@ const allowedOrigins = [
   "https://schoolofeventsafrica.com",
   "https://www.schoolofeventsafrica.com",
   "https://dws.ternkonnect.com",
+  "https://dws-academy-server.vercel.app",
 ];
 
 app.use((req, res, next) => {
@@ -82,7 +83,12 @@ app.use((req, res, next) => {
   // Unknown origins get no CORS header at all. The previous `*` fallback meant the
   // allowlist had no effect, and would have become a real hole the moment anything
   // moved to cookie auth.
-  if (origin && allowedOrigins.includes(origin)) {
+  if (
+    origin &&
+    (allowedOrigins.includes(origin) ||
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("http://127.0.0.1:"))
+  ) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
