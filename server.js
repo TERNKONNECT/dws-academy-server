@@ -76,6 +76,7 @@ const allowedOrigins = [
   "https://www.schoolofeventsafrica.com",
   "https://dws.ternkonnect.com",
   "https://dws-academy-server.vercel.app",
+  "https://dws-academy.vercel.app",
 ];
 
 app.use((req, res, next) => {
