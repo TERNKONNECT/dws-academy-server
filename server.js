@@ -37,6 +37,7 @@ import eventsRoutes from "./routes/events.js";
 import certificateRoutes from "./routes/certificates.js";
 import testimonialRoutes from "./routes/testimonials.js";
 import facultyRoutes from "./routes/faculty.js";
+import contactRoutes from "./routes/contact.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { uploadErrorHandler } from "./middleware/uploads.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
@@ -170,6 +171,7 @@ app.use("/api/events", eventsRoutes);
 app.use("/api/certificates", certificateRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 app.use("/api/faculty", facultyRoutes);
+app.use("/api/contact", contactRoutes);
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get("/", (req, res) => res.send("API is running"));
