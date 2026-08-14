@@ -66,10 +66,34 @@ npm run dev
   - `npm run create-super-admin`
 
 ## 5. Third-Party Integrations
-- **Resend**: Used exclusively for handling the `/api/contact` form submissions, routing emails to `schoolofeventsafrica@gmail.com`.
+- **Resend**: Used exclusively for handling the `/api/contact` all the OTPs and automated emails as well!,form submissions, routing emails to `schoolofeventsafrica@gmail.com`.
 - **Payment Gateway**: Integrated to handle course enrollments and purchases (e.g., via `/api/payments/initialize`). Ensure webhook endpoints (`/api/payments/webhook`) are correctly registered in the gateway's dashboard for production deployments.
 
-## 6. Deployment Considerations
-- **Frontend Deployment**: Can be seamlessly hosted on Vercel, Netlify, or AWS S3+CloudFront. Ensure that the build command is `npm run build` and the output directory is `dist`.
-- **Backend Deployment**: Designed for Node.js environments (e.g., Render, AWS EC2, DigitalOcean App Platform, or Serverless Lambda via `serverless-http`).
-- **CORS Configuration**: The backend `server.js` maintains a strict `allowedOrigins` array. Before launching in production, ensure your exact production frontend URL is added to the CORS whitelist to prevent blocked requests.
+## 6. Continuous Integration & Deployment (CI/CD)
+
+The project leverages **GitHub Actions** to automate testing and deployments across both the frontend and backend.
+
+### Unit Testing & Code Quality
+- **Backend**: Tests are written using the native Node.js test runner and run against a live PostgreSQL 16 database (spun up via Docker service in GitHub Actions). 
+  - *Pipeline Steps*: Code Checkout $\rightarrow$ Setup Node 22 $\rightarrow$ Install Dependencies (`npm ci`) $\rightarrow$ Syntax Check (`node --check`) $\rightarrow$ Unit Tests (`npm test`).
+- **Frontend**: Tests are executed via Vitest. The pipeline utilizes `bun` for ultra-fast dependency resolution.
+  - *Pipeline Steps*: Code Checkout $\rightarrow$ Setup Bun $\rightarrow$ Install Dependencies (`bun install`) $\rightarrow$ Typecheck $\rightarrow$ Lint $\rightarrow$ Tests (`bun run test`) $\rightarrow$ Build Validation.
+
+### Deployment Environments & Resources
+Deployments automatically trigger when code is pushed or merged into the `main` branch, given that all CI tests pass. 
+
+**Frontend (Production/Dev)**
+- **Pipeline**: Handled by `.github/workflows/deploy-frontend.yml`
+- **Resources**: AWS S3 & AWS CloudFront.
+- **Process**: The workflow builds the static assets via Vite (`bun run build`), syncs the `dist/` directory directly to an AWS S3 bucket, and then creates a CloudFront invalidation to instantly propagate the new frontend cache globally.
+
+**Backend (Production/Dev)**
+- **Pipeline**: Handled by `.github/workflows/deploy-backend.yml`
+- **Resources**: AWS Lambda & API Gateway (orchestrated via the Serverless Framework) and AWS RDS/Neon for PostgreSQL.
+- **Process**: The workflow generates the production `.env` file using GitHub Secrets, synchronizes the database schema via `node scripts/sync-db.js`, and finally runs `serverless deploy --stage prod` to update the Lambda functions and API gateway.
+
+### Handling Secrets in CI/CD
+To ensure successful deployment, the following GitHub Secrets must be configured in your repository:
+- **AWS Credentials**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+- **Backend App Secrets**: `DATABASE_URL`, `JWT_SECRET`, `FRONTEND_URL`, `RESEND_API_KEY`, `EMAIL_FROM`, `PAYSTACK_SECRET_KEY`, `CLOUDINARY_*` keys.
+- **Frontend App Secrets**: `VITE_API_BASE_URL`, `S3_BUCKET_NAME`, `CLOUDFRONT_DISTRIBUTION_ID`
