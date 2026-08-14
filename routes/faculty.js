@@ -11,11 +11,15 @@ const router = express.Router();
 // GET /api/faculty — public endpoint to fetch active faculty (limited to 4)
 router.get("/", async (req, res, next) => {
   try {
-    const faculties = await Faculty.findAll({
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : undefined;
+    const options = {
       where: { isActive: true },
       order: [["createdAt", "DESC"]],
-      limit: 4,
-    });
+    };
+    if (limit && !isNaN(limit)) {
+      options.limit = limit;
+    }
+    const faculties = await Faculty.findAll(options);
     res.json(faculties);
   } catch (error) {
     next(error);

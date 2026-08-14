@@ -31,6 +31,7 @@
     "multer": "^1.4.5-lts.1",
     "pg": "^8.11.0",
     "pg-hstore": "^2.3.4",
+    "resend": "^6.20.0",
     "sequelize": "^6.35.0",
     "serverless-http": "^4.0.0"
   },
