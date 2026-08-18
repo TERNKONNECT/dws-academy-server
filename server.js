@@ -23,6 +23,7 @@ import User from "./models/User.js";
 import { setupCourseAssociations } from "./models/Course.js";
 import Event, { setupEventAssociations } from "./models/Event.js";
 import EventImage, { setupEventImageAssociations } from "./models/EventImage.js";
+import GalleryCategory, { setupGalleryCategoryAssociations } from "./models/GalleryCategory.js";
 import authRoutes from "./routes/auth.js";
 import courseRoutes from "./routes/courses.js";
 import moduleRoutes from "./routes/modules.js";
@@ -34,10 +35,12 @@ import profileRoutes from "./routes/profile.js";
 import reviewRoutes from "./routes/reviews.js";
 import paymentRoutes from "./routes/payments.js";
 import eventsRoutes from "./routes/events.js";
+import galleryCategoryRoutes from "./routes/galleryCategories.js";
 import certificateRoutes from "./routes/certificates.js";
 import testimonialRoutes from "./routes/testimonials.js";
 import facultyRoutes from "./routes/faculty.js";
 import contactRoutes from "./routes/contact.js";
+import newsletterRoutes from "./routes/newsletter.js";
 import { apiLimiter } from "./middleware/rateLimit.js";
 import { uploadErrorHandler } from "./middleware/uploads.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
@@ -49,7 +52,8 @@ import "./models/Faculty.js";
 
 setupCourseAssociations(User);
 setupEventAssociations(EventImage);
-setupEventImageAssociations(Event);
+setupEventImageAssociations(Event, GalleryCategory);
+setupGalleryCategoryAssociations(EventImage);
 
 // Kick the connection off at cold start so it's often already ready by the time the
 // first request reaches the middleware below. Guarded with a no-op catch so a
@@ -168,10 +172,12 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/events", eventsRoutes);
+app.use("/api/gallery-categories", galleryCategoryRoutes);
 app.use("/api/certificates", certificateRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 app.use("/api/faculty", facultyRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/newsletter", newsletterRoutes);
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get("/", (req, res) => res.send("API is running"));

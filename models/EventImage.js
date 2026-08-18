@@ -23,12 +23,19 @@ const EventImage = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    categoryId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+      references: { model: "gallery_categories", key: "id" },
+    },
   },
   { tableName: "event_images", timestamps: true },
 );
 
-export const setupEventImageAssociations = (Event) => {
+export const setupEventImageAssociations = (Event, GalleryCategory) => {
   EventImage.belongsTo(Event, { foreignKey: "eventId", as: "event" });
+  EventImage.belongsTo(GalleryCategory, { foreignKey: "categoryId", as: "category" });
 };
 
 export default EventImage;
