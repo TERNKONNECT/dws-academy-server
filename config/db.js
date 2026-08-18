@@ -202,6 +202,72 @@ async function ensureEventTables() {
   }
 }
 
+async function ensureGalleryCategoryTable() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+
+  if (!tables.includes("gallery_categories")) {
+    await queryInterface.createTable("gallery_categories", {
+      id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+      name: { type: DataTypes.STRING, allowNull: false },
+      description: { type: DataTypes.TEXT, defaultValue: "" },
+      isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      date: { type: DataTypes.DATE, allowNull: true },
+      createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+      updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    });
+    console.log("Created gallery_categories table");
+  }
+
+  // Seed the default "Academy" category at id 1 so existing gallery images have
+  // somewhere to land, and fix up the sequence so future inserts don't collide with it.
+  const [existing] = await sequelize.query(
+    `SELECT id FROM gallery_categories WHERE id = 1`,
+  );
+  if (existing.length === 0) {
+    await sequelize.query(
+      `INSERT INTO gallery_categories (id, name, description, "isActive", "createdAt", "updatedAt")
+       VALUES (1, 'Academy', 'Default category for existing gallery images', true, NOW(), NOW())`,
+    );
+    await sequelize.query(
+      `SELECT setval(pg_get_serial_sequence('gallery_categories', 'id'), (SELECT MAX(id) FROM gallery_categories))`,
+    );
+    console.log("Seeded default Academy gallery category (id=1)");
+  }
+
+  if (tables.includes("event_images")) {
+    const imageTable = await queryInterface.describeTable("event_images");
+    if (!imageTable.categoryId) {
+      await queryInterface.addColumn("event_images", "categoryId", {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: { model: "gallery_categories", key: "id" },
+      });
+      console.log("Added missing event_images.categoryId column");
+    }
+
+    // Backfill any images without a category (pre-existing rows, or the column
+    // having just been added above) to the default Academy category.
+    await sequelize.query(
+      `UPDATE event_images SET "categoryId" = 1 WHERE "categoryId" IS NULL`,
+    );
+  }
+}
+
+async function ensureNewsletterSubscriberTable() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+  if (tables.includes("newsletter_subscribers")) return;
+
+  await queryInterface.createTable("newsletter_subscribers", {
+    id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+    email: { type: DataTypes.STRING, allowNull: false, unique: true },
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  });
+  console.log("Created newsletter_subscribers table");
+}
+
 async function ensureEnrollmentColumns() {
   const queryInterface = sequelize.getQueryInterface();
   let table;
@@ -270,6 +336,8 @@ export async function connectDB() {
       await ensurePaymentTable();
       await ensureQuizAttemptTable();
       await ensureEventTables();
+      await ensureGalleryCategoryTable();
+      await ensureNewsletterSubscriberTable();
       await ensureEnrollmentColumns();
       await ensureCertificateTable();
       isConnected = true;

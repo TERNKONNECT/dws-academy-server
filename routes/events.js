@@ -3,6 +3,7 @@ import path from "path";
 import { protect, superAdminOnly } from "../middleware/auth.js";
 import Event from "../models/Event.js";
 import EventImage from "../models/EventImage.js";
+import GalleryCategory from "../models/GalleryCategory.js";
 import { createUploadUrl, deleteFile, getFileUrl } from "../config/storage.js";
 import cloudinary from "../config/cloudinary.js";
 
@@ -12,7 +13,13 @@ const router = express.Router();
 router.get("/", async (req, res, next) => {
   try {
     const events = await Event.findAll({
-      include: [{ model: EventImage, as: "images" }],
+      include: [
+        {
+          model: EventImage,
+          as: "images",
+          include: [{ model: GalleryCategory, as: "category" }],
+        },
+      ],
       order: [["createdAt", "DESC"]],
     });
 
@@ -146,7 +153,7 @@ router.put("/:id/images/dev-upload", protect, superAdminOnly, async (req, res, n
 // SuperAdmin: Save uploaded image records to DB
 router.post("/:id/images", protect, superAdminOnly, async (req, res, next) => {
   try {
-    const { images } = req.body; // Array of { url, key }
+    const { images, categoryId } = req.body; // images: Array of { url, key }
     const eventId = req.params.id;
 
     const event = await Event.findByPk(eventId);
@@ -156,8 +163,15 @@ router.post("/:id/images", protect, superAdminOnly, async (req, res, next) => {
       return res.status(400).json({ error: "No images provided" });
     }
 
+    let resolvedCategoryId = 1;
+    if (categoryId !== undefined && categoryId !== null) {
+      const category = await GalleryCategory.findByPk(categoryId);
+      if (!category) return res.status(400).json({ error: "Category not found" });
+      resolvedCategoryId = category.id;
+    }
+
     const createdImages = await EventImage.bulkCreate(
-      images.map((img) => ({ eventId, url: img.url, key: img.key }))
+      images.map((img) => ({ eventId, url: img.url, key: img.key, categoryId: resolvedCategoryId }))
     );
 
     const formattedCreatedImages = await Promise.all(
