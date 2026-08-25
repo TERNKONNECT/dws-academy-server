@@ -1,5 +1,7 @@
 import express from "express";
+import { Op } from "sequelize";
 import Subscriber from "../models/Subscriber.js";
+import { protect, adminOnly } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -16,6 +18,29 @@ router.post("/", async (req, res, next) => {
     res.status(created ? 201 : 200).json({
       message: created ? "Subscribed successfully" : "You're already subscribed",
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/admin", protect, adminOnly, async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const where = {};
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt[Op.gte] = new Date(startDate);
+      if (endDate) where.createdAt[Op.lte] = new Date(endDate);
+    }
+
+    const subscribers = await Subscriber.findAll({
+      where,
+      order: [["createdAt", "DESC"]],
+      attributes: ["email", "createdAt"],
+    });
+
+    res.json(subscribers);
   } catch (err) {
     next(err);
   }
