@@ -6,9 +6,9 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 
 router.post("/", async (req, res, next) => {
   try {
-    const { name, email, company, subject, message } = req.body;
+    const { firstName, lastName, phone, email, category, message } = req.body;
 
-    if (!name || !email || !subject || !message) {
+    if (!firstName || !email || !category || !message) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -17,27 +17,49 @@ router.post("/", async (req, res, next) => {
       return res.status(500).json({ error: "Email service is not configured" });
     }
 
-    const { data, error } = await resend.emails.send({
+    // 1. Send email to admin (School of Events Africa)
+    const { data: adminData, error: adminError } = await resend.emails.send({
       from: "School of Events Africa <onboarding@resend.dev>", // Replace with verified domain if available
       to: ["schoolofeventsafrica@gmail.com"],
-      subject: `New Contact Form Submission: ${subject}`,
+      subject: `New Contact Form Submission: ${category}`,
       html: `
         <h2>New Contact Form Submission</h2>
-        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Name:</strong> ${firstName} ${lastName || ''}</p>
         <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Company:</strong> ${company || "N/A"}</p>
-        <p><strong>Subject (Area of Interest):</strong> ${subject}</p>
+        <p><strong>Phone:</strong> ${phone || "N/A"}</p>
+        <p><strong>Category:</strong> ${category}</p>
         <h3>Message:</h3>
         <p>${message.replace(/\n/g, '<br>')}</p>
       `,
     });
 
-    if (error) {
-      console.error("Resend Error:", error);
-      return res.status(400).json({ error: error.message });
+    if (adminError) {
+      console.error("Resend Error (Admin):", adminError);
+      return res.status(400).json({ error: adminError.message });
     }
 
-    res.status(200).json({ success: true, data });
+    // 2. Send confirmation email to the user
+    const { data: userData, error: userError } = await resend.emails.send({
+      from: "School of Events Africa <onboarding@resend.dev>", // Replace with verified domain if available
+      to: [email],
+      subject: "We have received your request - School of Events Africa",
+      html: `
+        <h2>Hi ${firstName},</h2>
+        <p>Thank you for getting in touch with us at School of Events Africa!</p>
+        <p>This is to confirm that we have received your request regarding <strong>${category}</strong>.</p>
+        <p>Our team will review your message and get back to you within 24 hours.</p>
+        <br/>
+        <p>Best Regards,</p>
+        <p>The School of Events Africa Team</p>
+      `,
+    });
+
+    if (userError) {
+      console.error("Resend Error (User):", userError);
+      // Not throwing error here so the user form submission still succeeds
+    }
+
+    res.status(200).json({ success: true, data: adminData });
   } catch (err) {
     console.error("Contact Form Error:", err);
     next(err);
