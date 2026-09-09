@@ -19,7 +19,7 @@ router.post("/", async (req, res, next) => {
 
     // 1. Send email to admin (School of Events Africa)
     const { data: adminData, error: adminError } = await resend.emails.send({
-      from: "School of Events Africa <onboarding@resend.dev>", // Replace with verified domain if available
+      from: "School of Events Africa <noreply@schoolofeventsafrica.com>", // Replace with verified domain if available
       to: ["schoolofeventsafrica@gmail.com"],
       subject: `New Contact Form Submission: ${category}`,
       html: `
@@ -40,7 +40,7 @@ router.post("/", async (req, res, next) => {
 
     // 2. Send confirmation email to the user
     const { data: userData, error: userError } = await resend.emails.send({
-      from: "School of Events Africa <onboarding@resend.dev>", // Replace with verified domain if available
+      from: process.env.EMAIL_FROM || "School of Events Africa <noreply@schoolofeventsafrica.com>",
       to: [email],
       subject: "We have received your request - School of Events Africa",
       html: `
