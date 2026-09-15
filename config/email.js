@@ -25,7 +25,7 @@ function getFromAddress() {
   return value;
 }
 
-export async function sendEmail({ to, subject, html }) {
+export async function sendEmail({ to, subject, html, from }) {
   if (!process.env.RESEND_API_KEY) {
     throw new Error("RESEND_API_KEY is not configured");
   }
@@ -37,7 +37,7 @@ export async function sendEmail({ to, subject, html }) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: getFromAddress(),
+      from: from || getFromAddress(),
       to: [to],
       subject,
       html,
