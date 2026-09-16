@@ -233,6 +233,63 @@ export function adminInviteEmailTemplate({ name, inviterName, link }) {
   });
 }
 
+export function bookPreorderConfirmationEmailTemplate({
+  fullName,
+  bookTitle,
+  quantity,
+  amount,
+  currency = "NGN",
+  reference,
+  communityUrl,
+}) {
+  const safeName = escapeHtml(fullName);
+  const safeBookTitle = escapeHtml(bookTitle);
+  const safeReference = escapeHtml(reference);
+  const formattedAmount = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+  }).format(amount);
+
+  return emailLayout({
+    preview: `Your preorder for ${bookTitle} is confirmed.`,
+    eyebrow: "Preorder confirmed",
+    title: "You are officially on the list 🎉",
+    body: `
+      <p style="margin:0 0 16px;">Hi ${safeName},</p>
+      <p style="margin:0 0 16px;">Thank you for pre-ordering <strong>${safeBookTitle}</strong>. You have secured your copy before the official release.</p>
+      <p style="margin:0;">This book is more than pages. It is a collection of lessons, conversations and experiences created for people who know they are capable of more.</p>
+    `,
+    secondary: `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:4px 0;color:#71717a;font-size:13px;">Book</td>
+          <td align="right" style="padding:4px 0;font-weight:700;color:#111111;">${safeBookTitle}</td>
+        </tr>
+        <tr>
+          <td style="padding:4px 0;color:#71717a;font-size:13px;">Quantity</td>
+          <td align="right" style="padding:4px 0;color:#3f3f46;">${quantity}</td>
+        </tr>
+        <tr>
+          <td style="padding:4px 0;color:#71717a;font-size:13px;">Amount paid</td>
+          <td align="right" style="padding:4px 0;font-weight:700;color:#111111;">${escapeHtml(formattedAmount)}</td>
+        </tr>
+        <tr>
+          <td style="padding:4px 0;color:#71717a;font-size:13px;">Reference</td>
+          <td align="right" style="padding:4px 0;color:#3f3f46;">${safeReference}</td>
+        </tr>
+      </table>
+    `,
+    action: communityUrl
+      ? {
+          href: escapeHtml(communityUrl),
+          label: "Join the Launch Community",
+        }
+      : undefined,
+    footerNote: "Questions about your preorder? Just reply to this email.",
+  });
+}
+
 export function paymentInvoiceEmailTemplate({
   name,
   courseTitle,
