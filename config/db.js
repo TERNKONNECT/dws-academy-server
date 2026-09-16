@@ -268,6 +268,50 @@ async function ensureNewsletterSubscriberTable() {
   console.log("Created newsletter_subscribers table");
 }
 
+async function ensureBookPreorderTable() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+  if (tables.includes("book_preorders")) {
+    const table = await queryInterface.describeTable("book_preorders");
+    if (!table.bookTitle) {
+      await queryInterface.addColumn("book_preorders", "bookTitle", {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: "Money on the Table",
+      });
+      console.log("Added missing book_preorders.bookTitle column");
+    }
+    return;
+  }
+
+  await queryInterface.createTable("book_preorders", {
+    id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+    bookSlug: { type: DataTypes.STRING, allowNull: false, defaultValue: "money-on-the-table" },
+    bookTitle: { type: DataTypes.STRING, allowNull: false, defaultValue: "Money on the Table" },
+    fullName: { type: DataTypes.STRING, allowNull: false },
+    email: { type: DataTypes.STRING, allowNull: false },
+    whatsapp: { type: DataTypes.STRING, allowNull: false },
+    quantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
+    deliveryDetails: { type: DataTypes.TEXT, allowNull: false, defaultValue: "" },
+    reference: { type: DataTypes.STRING, allowNull: false, unique: true },
+    amount: { type: DataTypes.INTEGER, allowNull: false },
+    currency: { type: DataTypes.STRING, allowNull: false, defaultValue: "NGN" },
+    status: {
+      type: DataTypes.ENUM("pending", "success", "failed", "abandoned"),
+      allowNull: false,
+      defaultValue: "pending",
+    },
+    paidAt: { type: DataTypes.DATE, allowNull: true },
+    channel: { type: DataTypes.STRING, allowNull: false, defaultValue: "" },
+    gatewayResponse: { type: DataTypes.STRING, allowNull: false, defaultValue: "" },
+    paystackTransactionId: { type: DataTypes.STRING, allowNull: false, defaultValue: "" },
+    metadata: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  });
+  console.log("Created book_preorders table");
+}
+
 async function ensureEnrollmentColumns() {
   const queryInterface = sequelize.getQueryInterface();
   let table;
@@ -338,6 +382,7 @@ export async function connectDB() {
       await ensureEventTables();
       await ensureGalleryCategoryTable();
       await ensureNewsletterSubscriberTable();
+      await ensureBookPreorderTable();
       await ensureEnrollmentColumns();
       await ensureCertificateTable();
       isConnected = true;

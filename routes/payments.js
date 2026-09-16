@@ -6,6 +6,8 @@ import Course from "../models/Course.js";
 import Enrollment from "../models/Enrollment.js";
 import Payment from "../models/Payment.js";
 import User from "../models/User.js";
+import BookPreorder from "../models/BookPreorder.js";
+import { applyPreorderPaystackResult } from "./preorders.js";
 import { protect, adminOnly } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import {
@@ -824,6 +826,35 @@ router.post("/webhook", async (req, res, next) => {
     });
 
     const event = req.body;
+
+    // Paystack only allows one webhook URL per account, so this one endpoint
+    // has to fan out to every kind of thing that can be paid for. Book
+    // preorders use a "motd-" reference prefix (see routes/preorders.js) —
+    // anything else is assumed to be a course payment, the original use of
+    // this route.
+    if (event?.event === "charge.success" && event.data?.reference?.startsWith("motd-")) {
+      const preorder = await BookPreorder.findOne({
+        where: { reference: event.data.reference },
+      });
+      if (preorder) {
+        const data = await verifyPaystackTransaction(event.data.reference);
+        await applyPreorderPaystackResult(preorder, data);
+        paymentLog("info", "webhook_preorder_processed", {
+          reference: preorder.reference,
+          status: preorder.status,
+        });
+      } else {
+        paymentLog("warn", "webhook_preorder_not_found", {
+          reference: event.data.reference,
+        });
+      }
+      paymentLog("info", "webhook_completed", {
+        event: req.body?.event,
+        reference: req.body?.data?.reference,
+      });
+      return res.sendStatus(200);
+    }
+
     if (event?.event === "charge.success") {
       paymentLog("info", "webhook_charge_success_received", {
         reference: event.data?.reference,
