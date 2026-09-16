@@ -10,7 +10,7 @@ import { sendEmail, bookPreorderConfirmationEmailTemplate } from "../config/emai
 
 const router = express.Router();
 
-const PRICE_PER_COPY_NGN = 5000;
+const PRICE_PER_COPY_NGN = 15000;
 const COMMUNITY_URL = "https://www.instagram.com/channel/AbZw-Yo56-tG_h53/";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
