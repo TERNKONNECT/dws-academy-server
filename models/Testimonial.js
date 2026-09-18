@@ -24,7 +24,7 @@ const Testimonial = sequelize.define(
       defaultValue: "",
     },
     content: {
-      type: DataTypes.STRING(500),
+      type: DataTypes.TEXT,
       allowNull: false
     },
     // Optional — a testimonial with no photo still renders fine (the public page

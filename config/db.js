@@ -369,6 +369,19 @@ async function ensureCertificateTable() {
   console.log("Created missing certificates table");
 }
 
+async function ensureTestimonialContentColumn() {
+  const queryInterface = sequelize.getQueryInterface();
+  const tables = await queryInterface.showAllTables();
+  if (tables.includes("testimonials")) {
+    try {
+      await sequelize.query('ALTER TABLE testimonials ALTER COLUMN content TYPE TEXT;');
+      console.log("Ensured testimonials.content is TEXT");
+    } catch (err) {
+      console.log("Skipping testimonials.content alter:", err.message);
+    }
+  }
+}
+
 export async function connectDB() {
   if (isConnected) return;
   if (connectionPromise) return connectionPromise;
@@ -385,6 +398,7 @@ export async function connectDB() {
       await ensureBookPreorderTable();
       await ensureEnrollmentColumns();
       await ensureCertificateTable();
+      await ensureTestimonialContentColumn();
       isConnected = true;
       console.log("PostgreSQL connected");
     } catch (err) {
