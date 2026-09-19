@@ -197,4 +197,20 @@ router.get("/admin", protect, adminOnly, async (req, res, next) => {
   }
 });
 
+router.delete("/admin/:id", protect, adminOnly, async (req, res, next) => {
+  try {
+    const preorder = await BookPreorder.findByPk(req.params.id);
+    if (!preorder) {
+      return res.status(404).json({ error: "Preorder not found" });
+    }
+    if (preorder.status !== "pending") {
+      return res.status(400).json({ error: "Only pending preorders can be deleted" });
+    }
+    await preorder.destroy();
+    res.json({ message: "Preorder deleted successfully" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
